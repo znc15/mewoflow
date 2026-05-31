@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build and coverage output
+dist/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# AI coding tool local files
+.claude/
+.cursor/
+.windsurf/
+.codex/
+.gemini/
+.kiro/
+.qoder/
+.continue/
+.aider*
+.roo/
+.crush/
+CLAUDE.local.md
+AGENTS.local.md
+
+# MewoFlow volatile runtime state
+.mewoflow/runtime/sessions/*.json
+.mewoflow/runtime/*.log
+.mewoflow/

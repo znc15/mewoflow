@@ -1,0 +1,41 @@
+{
+  "name": "mewoflow",
+  "version": "0.1.0",
+  "description": "Local Claude Code workflow gates for research, grill, planning, implementation, verification, and archive.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "mewoflow": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "workflow",
+    "cli",
+    "agent"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prebuild": "npm run clean",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts",
+    "pack:dry": "npm pack --dry-run",
+    "prepack": "npm run build",
+    "verify": "npm run typecheck && npm test && npm run build && npm run pack:dry"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
