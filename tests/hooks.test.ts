@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { handlePostToolUse, handlePreToolUse, handleUserPromptSubmit } from "../src/hooks.js";
+import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit } from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
 import { loadSession, loadTask, recordReadFile, setActiveTask, taskFile } from "../src/task.js";
 
@@ -13,6 +13,19 @@ describe("hooks", () => {
 
     expect(String(output.additionalContext)).toContain("simple");
     await expect(fs.readdir(path.join(root, ".mewoflow", "tasks"))).rejects.toThrow();
+  });
+
+  it("does not create a workflow for conversational prompts after init", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const output = await handleUserPromptSubmit(root, { prompt: "你好", session_id: "s1" });
+
+    expect(String(output.additionalContext)).toContain("simple");
+
+    const session = await loadSession(root, "s1");
+    expect(session.activeTaskId).toBeUndefined();
+
+    const stop = await handleStop(root, { session_id: "s1" });
+    expect(stop).toEqual({});
   });
 
   it("creates standard and epic tasks", async () => {

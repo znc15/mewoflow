@@ -24,9 +24,11 @@ export type PromptClassification = "simple" | TaskType;
 
 export function classifyPrompt(prompt: string): PromptClassification {
   if (/系统|平台|架构|工具集|大型重构|workflow|agent/i.test(prompt)) return "epic";
-  if (/bug|修复|新增|添加|API|依赖|测试|登录/i.test(prompt)) return "standard";
+  if (/修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|doctor|hook|功能/i.test(prompt)) {
+    return "standard";
+  }
   if (/颜色|文案|typo|样式|小改动|margin|padding|div/i.test(prompt)) return "simple";
-  return "standard";
+  return "simple";
 }
 
 export async function handleUserPromptSubmit(root: string, input: HookInput): Promise<Record<string, unknown>> {
