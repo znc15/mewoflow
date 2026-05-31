@@ -27,6 +27,7 @@ export async function initProject(root = process.cwd()): Promise<void> {
   await writeFileEnsured(path.join(root, ".mewoflow", "tasks", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), hookShimTemplate());
+  await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), entrySkillTemplate());
   await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"), doctorSkillTemplate());
   await writeMergedClaudeSettings(path.join(root, ".claude", "settings.json"));
 }
@@ -133,6 +134,7 @@ function claudeTemplate(): string {
     "",
     "This project is wired to Claude Code hooks through MewoFlow.",
     "",
+    "- Use `/mewoflow` to initialize or resume the local MewoFlow workflow entry point.",
     "- Use `/mewoflow-doctor` when asked to verify whether MewoFlow is working.",
     "- Research must use Claude Code WebSearch, WebFetch, MCP search, or explicit user-provided sources before `mewoflow check research`.",
     "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
@@ -168,8 +170,12 @@ function hookShimTemplate(): string {
   return `#!/usr/bin/env node\nconst { spawnSync } = require("node:child_process");\nconst result = spawnSync("npx", ["mewoflow", "hook", ...process.argv.slice(2)], { stdio: "inherit", shell: true });\nprocess.exit(result.status ?? 1);\n`;
 }
 
+function entrySkillTemplate(): string {
+  return `---\ndescription: Bootstrap or resume MewoFlow in Claude Code. Use when the user invokes /mewoflow to initialize wiring, verify hooks, and get back to a ready workflow state.\ndisable-model-invocation: true\n---\n\n# MewoFlow\n\nRun this skill when the user invokes \`/mewoflow\` or asks to start or continue MewoFlow in the current project.\n\n## Required flow\n\n1. Check whether \`.mewoflow/rules.md\`, \`.claude/settings.json\`, and \`.claude/skills/mewoflow-doctor/SKILL.md\` already exist.\n2. If MewoFlow files or hook wiring are missing, run:\n\n\`\`\`bash\nnpx mewoflow init\n\`\`\`\n\n3. Run:\n\n\`\`\`bash\nnpx mewoflow doctor\n\`\`\`\n\n4. If doctor reports a failure, explain the smallest next fix and stop.\n5. If there is an active task, report the current gate and continue that workflow instead of starting unrelated implementation.\n6. If there is no active task, tell the user MewoFlow is ready and ask for the concrete development request. Do not start implementing until the user gives a real task.\n`;
+}
+
 function doctorSkillTemplate(): string {
-  return `---\ndescription: Run MewoFlow doctor with a forced search-backed health check. Use when the user asks to check whether MewoFlow hooks, workflow files, and search evidence are working.\ndisable-model-invocation: true\n---\n\n# MewoFlow Doctor\n\nRun this skill when the user invokes \`/mewoflow-doctor\` or asks to check whether MewoFlow is working.\n\n## Required flow\n\n1. Use Claude Code WebSearch first. Search for current Claude Code hooks or custom skills documentation so the session records search evidence.\n2. Run:\n\n\`\`\`bash\nmewoflow doctor --require-search\n\`\`\`\n\n3. Report PASS/WARN/FAIL items exactly.\n4. If the doctor fails, explain the smallest next fix. Do not claim MewoFlow is healthy unless the command exits successfully.\n`;
+  return `---\ndescription: Run MewoFlow doctor with a forced search-backed health check. Use when the user asks to check whether MewoFlow hooks, workflow files, and search evidence are working.\ndisable-model-invocation: true\n---\n\n# MewoFlow Doctor\n\nRun this skill when the user invokes \`/mewoflow-doctor\` or asks to check whether MewoFlow is working.\n\n## Required flow\n\n1. Use Claude Code WebSearch first. Search for current Claude Code hooks or custom skills documentation so the session records search evidence.\n2. Run:\n\n\`\`\`bash\nnpx mewoflow doctor --require-search\n\`\`\`\n\n3. Report PASS/WARN/FAIL items exactly.\n4. If the doctor fails, explain the smallest next fix. Do not claim MewoFlow is healthy unless the command exits successfully.\n`;
 }
 
 function mewoflowHooks(): Record<string, ClaudeHookGroup[]> {

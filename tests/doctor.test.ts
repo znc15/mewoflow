@@ -20,6 +20,7 @@ describe("mewoflow doctor", () => {
     expect(report.text).toContain("PASS CLAUDE.md");
     expect(report.text).toContain("PASS Claude memory import");
     expect(report.text).toContain("PASS Claude Code hooks");
+    expect(report.text).toContain("PASS Claude Code skills");
     expect(report.text).toContain("WARN Search evidence");
   });
 
@@ -52,6 +53,7 @@ describe("mewoflow doctor", () => {
 
     expect(report.ok).toBe(false);
     expect(report.text).toContain("FAIL .mewoflow/rules.md");
+    expect(report.text).toContain("FAIL .claude/skills/mewoflow/SKILL.md");
     expect(report.text).toContain("Run `mewoflow init`");
   });
 });

@@ -69,6 +69,14 @@ npx mewoflow init
 
 初始化本身只会写入配置、hooks 和本地流程文件，不会创建任务。只有明确的开发请求才会进入 workflow。
 
+初始化后，先在 Claude Code 里运行：
+
+```txt
+/mewoflow
+```
+
+它会检查本地 wiring、必要时重新初始化，并确认 hooks 与 skill 是否处于可工作状态。
+
 然后向 Claude Code 提出一个需要完整流程的开发任务，例如：
 
 ```txt
@@ -130,6 +138,8 @@ CLAUDE.md
 .claude/
   settings.json
   skills/
+    mewoflow/
+      SKILL.md
     mewoflow-doctor/
       SKILL.md
 ```
@@ -156,6 +166,19 @@ Hook 职责：
 
 ## Doctor
 
+Claude Code 里的主入口：
+
+```txt
+/mewoflow
+```
+
+它的职责是：
+
+- 检查 MewoFlow 是否已初始化
+- 必要时重新运行 `init`
+- 检查 hooks 和 skill wiring
+- 告诉你当前是继续已有任务，还是等待新的开发请求
+
 检查本地配置：
 
 ```bash
@@ -171,10 +194,11 @@ mewoflow doctor --require-search
 初始化后也会生成 Claude Code skill：
 
 ```txt
+/mewoflow
 /mewoflow-doctor
 ```
 
-这个命令会要求 Claude Code 先使用自带搜索，再运行 `mewoflow doctor --require-search`。
+`/mewoflow` 用来开始或恢复 MewoFlow，`/mewoflow-doctor` 会要求 Claude Code 先使用自带搜索，再运行 `npx mewoflow doctor --require-search`。
 
 ## AGENTS.md and CLAUDE.md
 

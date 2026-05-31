@@ -42,3 +42,6 @@ AGENTS.local.md
 .mewoflow/runtime/sessions/*.json
 .mewoflow/runtime/*.log
 .mewoflow/
+
+# Local planning notes
+docs/plans/

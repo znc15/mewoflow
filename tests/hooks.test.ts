@@ -41,6 +41,20 @@ describe("hooks", () => {
     expect(stop).toEqual({});
   });
 
+  it("creates a workflow for build-from-scratch product prompts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const output = await handleUserPromptSubmit(root, { prompt: "我想创建一个音乐网页", session_id: "s1" });
+
+    expect(String(output.additionalContext)).toContain("MewoFlow task created");
+
+    const active = await loadSession(root, "s1");
+    expect(active.activeTaskId).toBeTruthy();
+
+    const task = await loadTask(root, active.activeTaskId!);
+    expect(task.type).toBe("standard");
+    expect(task.gate).toBe("research");
+  });
+
   it("creates standard and epic tasks", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const standard = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
@@ -119,7 +133,7 @@ describe("hooks", () => {
     expect(JSON.stringify(blockedTaskJson)).toContain("deny");
   });
 
-  it("allows read-only bash redirection but still blocks file redirection writes", async () => {
+  it("allows read-only bash redirection but blocks scaffolding and file writes", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
 
@@ -129,6 +143,20 @@ describe("hooks", () => {
       tool_input: { command: "mewoflow doctor --require-search 2>&1" },
     });
     expect(JSON.stringify(allowed)).not.toContain("deny");
+
+    const blockedCreate = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "pnpm create vite@latest . --template react 2>&1" },
+    });
+    expect(JSON.stringify(blockedCreate)).toContain("deny");
+
+    const blockedInstall = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "pnpm install 2>&1" },
+    });
+    expect(JSON.stringify(blockedInstall)).toContain("deny");
 
     const blocked = await handlePreToolUse(root, {
       session_id: "s1",

@@ -44,6 +44,7 @@ const requiredFiles = [
   ".mewoflow/specs/testing.md",
   ".mewoflow/specs/agent.md",
   ".claude/settings.json",
+  ".claude/skills/mewoflow/SKILL.md",
   ".claude/skills/mewoflow-doctor/SKILL.md",
 ];
 
@@ -62,6 +63,7 @@ export async function runDoctor(root = process.cwd(), options: DoctorOptions = {
   checks.push(...(await checkRequiredFiles(root)));
   checks.push(await checkClaudeMemoryImport(root));
   checks.push(await checkClaudeHooks(root));
+  checks.push(await checkClaudeSkills(root));
   checks.push(await checkActiveTask(root, sessionId));
   checks.push(await checkSearchEvidence(root, sessionId, options.requireSearch ?? false));
 
@@ -107,6 +109,46 @@ async function checkClaudeHooks(root: string): Promise<DoctorCheck> {
     : fail("Claude Code hooks", `Missing hook event(s): ${missing.join(", ")}. Run ` + "`mewoflow init`.");
 }
 
+async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
+  const checks = [
+    {
+      name: "/mewoflow",
+      file: path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"),
+      snippets: ["npx mewoflow init", "npx mewoflow doctor"],
+    },
+    {
+      name: "/mewoflow-doctor",
+      file: path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"),
+      snippets: ["WebSearch", "npx mewoflow doctor --require-search"],
+    },
+  ];
+
+  const missing: string[] = [];
+  const stale: string[] = [];
+
+  for (const check of checks) {
+    const text = await readTextIfExists(check.file);
+    if (!text) {
+      missing.push(check.name);
+      continue;
+    }
+
+    if (!check.snippets.every((snippet) => text.includes(snippet))) {
+      stale.push(check.name);
+    }
+  }
+
+  if (missing.length > 0) {
+    return fail("Claude Code skills", `Missing skill file(s): ${missing.join(", ")}. Run ` + "`mewoflow init`.");
+  }
+
+  if (stale.length > 0) {
+    return fail("Claude Code skills", `Outdated or custom skill file(s): ${stale.join(", ")}. Re-run ` + "`mewoflow init` or update them manually.");
+  }
+
+  return pass("Claude Code skills", "Generated /mewoflow and /mewoflow-doctor skills look healthy.");
+}
+
 async function checkClaudeMemoryImport(root: string): Promise<DoctorCheck> {
   const claudeFile = path.join(root, "CLAUDE.md");
   const text = await readTextIfExists(claudeFile);
@@ -134,7 +176,7 @@ async function checkSearchEvidence(root: string, sessionId: string, required: bo
   if (latest) return pass("Search evidence", `Last recorded search tool: ${latest.tool} at ${latest.at}.`);
   return required
     ? fail("Search evidence", "No WebSearch/WebFetch/MCP search was recorded in this session.")
-    : warn("Search evidence", "No search recorded yet. Use `/mewoflow-doctor` in Claude to force a search-backed check.");
+    : warn("Search evidence", "No search recorded yet. Use `/mewoflow` or `/mewoflow-doctor` in Claude to force a check.");
 }
 
 function formatDoctorReport(checks: DoctorCheck[]): string {

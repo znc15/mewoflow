@@ -23,12 +23,12 @@ export type HookInput = {
 export type PromptClassification = "simple" | TaskType;
 
 export function classifyPrompt(prompt: string): PromptClassification {
+  if (isMinorEditPrompt(prompt)) return "simple";
   if (isMetaPrompt(prompt)) return "simple";
-  if (/系统|平台|架构|工具集|大型重构|workflow|agent/i.test(prompt)) return "epic";
-  if (/修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt)) {
+  if (isEpicPrompt(prompt)) return "epic";
+  if (isWorkflowTaskPrompt(prompt)) {
     return "standard";
   }
-  if (/颜色|文案|typo|样式|小改动|margin|padding|div/i.test(prompt)) return "simple";
   return "simple";
 }
 
@@ -161,9 +161,34 @@ function isWriteAttempt(tool: string, command: string): boolean {
   if (/^(Edit|Write|MultiEdit|NotebookEdit)$/i.test(tool)) return true;
   if (tool !== "Bash") return false;
   return (
-    /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b|npm\s+install|pnpm\s+add|yarn\s+add/i.test(
-      command,
-    ) || hasShellWriteRedirection(command)
+    /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b/i.test(command) ||
+    hasPackageManagerWriteCommand(command) ||
+    hasShellWriteRedirection(command)
+  );
+}
+
+function isEpicPrompt(prompt: string): boolean {
+  return /系统|平台|架构|工具集|大型重构|workflow|agent/i.test(prompt);
+}
+
+function isMinorEditPrompt(prompt: string): boolean {
+  return /颜色|文案|typo|样式|小改动|margin|padding|div/i.test(prompt);
+}
+
+function isWorkflowTaskPrompt(prompt: string): boolean {
+  return isBuildFromScratchPrompt(prompt) || /修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt);
+}
+
+function isBuildFromScratchPrompt(prompt: string): boolean {
+  return /创建|做|搭建|生成|开发|从零开始|新建/i.test(prompt) && /网页|网站|应用|项目|播放器|前端|后台|管理系统|博客|官网|小程序|工具|客户端|服务端|管理台|页面/i.test(prompt);
+}
+
+function hasPackageManagerWriteCommand(command: string): boolean {
+  return (
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|create|init)\b/i.test(command) ||
+    /\b(?:pnpm|yarn)\s+dlx\b/i.test(command) ||
+    /\bnpm\s+exec\b/i.test(command) ||
+    /\bnpx\s+create[-\w./@]*\b/i.test(command)
   );
 }
 
