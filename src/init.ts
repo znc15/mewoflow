@@ -16,6 +16,8 @@ type ClaudeSettings = Record<string, unknown> & {
 };
 
 export async function initProject(root = process.cwd()): Promise<void> {
+  await writeFileIfMissing(path.join(root, "AGENTS.md"), agentsTemplate());
+  await writeFileIfMissing(path.join(root, "CLAUDE.md"), claudeTemplate());
   await writeFileIfMissing(path.join(root, ".mewoflow", "rules.md"), rulesTemplate());
   await writeFileIfMissing(path.join(root, ".mewoflow", "workflow.md"), workflowTemplate());
   await writeFileIfMissing(path.join(root, ".mewoflow", "journal.md"), journalTemplate());
@@ -92,6 +94,50 @@ function hookExists(groups: ClaudeHookGroup[], desiredHook: ClaudeHook): boolean
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function agentsTemplate(): string {
+  return [
+    "# Agent Instructions",
+    "",
+    "This project uses MewoFlow to keep AI development work evidence-driven.",
+    "",
+    "For standard and complex development tasks, follow the full workflow:",
+    "",
+    "```txt",
+    "research -> grill -> plan -> implement -> verify -> archive",
+    "```",
+    "",
+    "Rules:",
+    "",
+    "- Use current sources before planning or implementing.",
+    "- Ask and record clarifying questions before locking the plan.",
+    "- Do not edit implementation files before the active task reaches the `implement` gate.",
+    "- Do not claim completion without verification evidence.",
+    "- Use `mewoflow status` to inspect the active task.",
+    "- Use `mewoflow check <gate>` to advance a gate only after the evidence file is complete.",
+    "- Use `mewoflow doctor` to check local wiring.",
+    "",
+    "Task evidence lives in `.mewoflow/tasks/<task-id>/`.",
+    "Project rules and compact specs live in `.mewoflow/rules.md`, `.mewoflow/workflow.md`, and `.mewoflow/specs/`.",
+    "",
+    "MewoFlow hooks are the hard enforcement layer. This file is soft guidance for AI agents.",
+  ].join("\n") + "\n";
+}
+
+function claudeTemplate(): string {
+  return [
+    "@AGENTS.md",
+    "",
+    "## Claude Code",
+    "",
+    "This project is wired to Claude Code hooks through MewoFlow.",
+    "",
+    "- Use `/mewoflow-doctor` when asked to verify whether MewoFlow is working.",
+    "- Research must use Claude Code WebSearch, WebFetch, MCP search, or explicit user-provided sources before `mewoflow check research`.",
+    "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
+    "- Let hooks block incomplete work instead of bypassing the workflow.",
+  ].join("\n") + "\n";
 }
 
 function rulesTemplate(): string {

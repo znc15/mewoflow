@@ -10,6 +10,8 @@ describe("initProject", () => {
 
     await initProject(root);
 
+    await expect(fs.stat(path.join(root, "AGENTS.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, "CLAUDE.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "rules.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "workflow.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "journal.md"))).resolves.toBeTruthy();
@@ -21,6 +23,8 @@ describe("initProject", () => {
     await expect(fs.stat(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "settings.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"))).resolves.toBeTruthy();
+
+    await expect(fs.readFile(path.join(root, "CLAUDE.md"), "utf8")).resolves.toContain("@AGENTS.md");
   });
 
   it("preserves user-edited rules and workflow files", async () => {
@@ -43,17 +47,23 @@ describe("initProject", () => {
     const journalFile = path.join(root, ".mewoflow", "journal.md");
     const codingSpecFile = path.join(root, ".mewoflow", "specs", "coding.md");
     const doctorSkillFile = path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md");
+    const agentsFile = path.join(root, "AGENTS.md");
+    const claudeFile = path.join(root, "CLAUDE.md");
 
     await initProject(root);
     await fs.writeFile(journalFile, "custom journal\n", "utf8");
     await fs.writeFile(codingSpecFile, "custom coding spec\n", "utf8");
     await fs.writeFile(doctorSkillFile, "custom doctor skill\n", "utf8");
+    await fs.writeFile(agentsFile, "custom agents\n", "utf8");
+    await fs.writeFile(claudeFile, "custom claude\n", "utf8");
 
     await initProject(root);
 
     await expect(fs.readFile(journalFile, "utf8")).resolves.toBe("custom journal\n");
     await expect(fs.readFile(codingSpecFile, "utf8")).resolves.toBe("custom coding spec\n");
     await expect(fs.readFile(doctorSkillFile, "utf8")).resolves.toBe("custom doctor skill\n");
+    await expect(fs.readFile(agentsFile, "utf8")).resolves.toBe("custom agents\n");
+    await expect(fs.readFile(claudeFile, "utf8")).resolves.toBe("custom claude\n");
   });
 
   it("merges Claude Code hooks without duplicating them", async () => {

@@ -34,6 +34,8 @@ type ClaudeSettings = {
 };
 
 const requiredFiles = [
+  "AGENTS.md",
+  "CLAUDE.md",
   ".mewoflow/rules.md",
   ".mewoflow/workflow.md",
   ".mewoflow/runtime/mewoflow-hook.cjs",
@@ -58,6 +60,7 @@ export async function runDoctor(root = process.cwd(), options: DoctorOptions = {
 
   checks.push(checkNodeVersion());
   checks.push(...(await checkRequiredFiles(root)));
+  checks.push(await checkClaudeMemoryImport(root));
   checks.push(await checkClaudeHooks(root));
   checks.push(await checkActiveTask(root, sessionId));
   checks.push(await checkSearchEvidence(root, sessionId, options.requireSearch ?? false));
@@ -102,6 +105,16 @@ async function checkClaudeHooks(root: string): Promise<DoctorCheck> {
   return missing.length === 0
     ? pass("Claude Code hooks", "All MewoFlow hook events are configured.")
     : fail("Claude Code hooks", `Missing hook event(s): ${missing.join(", ")}. Run ` + "`mewoflow init`.");
+}
+
+async function checkClaudeMemoryImport(root: string): Promise<DoctorCheck> {
+  const claudeFile = path.join(root, "CLAUDE.md");
+  const text = await readTextIfExists(claudeFile);
+  if (!text) return warn("Claude memory import", "CLAUDE.md is missing. Run `mewoflow init`.");
+
+  return /(^|\n)\s*@AGENTS\.md\s*(\n|$)/.test(text)
+    ? pass("Claude memory import", "CLAUDE.md imports AGENTS.md.")
+    : warn("Claude memory import", "CLAUDE.md does not import AGENTS.md. Add `@AGENTS.md` to share cross-agent guidance with Claude Code.");
 }
 
 async function checkActiveTask(root: string, sessionId: string): Promise<DoctorCheck> {

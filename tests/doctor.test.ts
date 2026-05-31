@@ -16,8 +16,22 @@ describe("mewoflow doctor", () => {
 
     expect(report.ok).toBe(true);
     expect(report.text).toContain("MewoFlow Doctor");
+    expect(report.text).toContain("PASS AGENTS.md");
+    expect(report.text).toContain("PASS CLAUDE.md");
+    expect(report.text).toContain("PASS Claude memory import");
     expect(report.text).toContain("PASS Claude Code hooks");
     expect(report.text).toContain("WARN Search evidence");
+  });
+
+  it("warns when Claude memory does not import AGENTS.md", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-doctor-"));
+    await initProject(root);
+    await fs.writeFile(path.join(root, "CLAUDE.md"), "# Custom Claude\n", "utf8");
+
+    const report = await runDoctor(root);
+
+    expect(report.ok).toBe(true);
+    expect(report.text).toContain("WARN Claude memory import");
   });
 
   it("requires recorded search evidence when requested", async () => {
