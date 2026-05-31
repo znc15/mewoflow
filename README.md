@@ -3,7 +3,7 @@
 ![Status](https://img.shields.io/badge/status-v0.2-green)
 ![Runtime](https://img.shields.io/badge/node-%3E%3D18-339933)
 ![Client](https://img.shields.io/badge/client-Claude%20Code-111111)
-![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 MewoFlow 是一个面向 Claude Code 的本地开发流程门禁工具。它通过 Claude Code Hooks 和项目内状态文件，把“先研究、再澄清、再计划、再实现、再验证、最后归档”的流程固定下来，减少 AI 跳步骤、忘规则、没验证就声称完成的问题。
 
@@ -118,7 +118,7 @@ npm run dev -- init
 在 Claude Code 项目根目录执行：
 
 ```bash
-mewoflow init
+npx mewoflow init
 ```
 
 然后向 Claude Code 提出一个开发任务，例如：
@@ -454,4 +454,4 @@ mewoflow doctor --require-search
 
 ## 许可证
 
-当前 `package.json` 使用 `UNLICENSED`。公开发布为开源项目前，请先选择并添加正式许可证。
+MewoFlow 使用 [MIT License](./LICENSE)。

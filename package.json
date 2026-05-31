@@ -2,7 +2,7 @@
   "name": "mewoflow",
   "version": "0.2.0",
   "description": "Local Claude Code workflow gates for research, grill, planning, implementation, verification, and archive.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "mewoflow": "dist/src/cli.js"
