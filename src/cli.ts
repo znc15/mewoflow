@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { initProject } from "./init.js";
+import { runDoctor } from "./doctor.js";
 import {
+  appendArchiveToJournal,
   advanceTask,
   getActiveTask,
   loadSession,
@@ -13,7 +15,7 @@ import {
 import { validateArchive, validateGrill, validatePlan, validateResearch, validateVerify } from "./validators.js";
 import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit, type HookInput } from "./hooks.js";
 
-const version = "0.1.0";
+const version = "0.2.0";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;
@@ -35,6 +37,16 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
   }
 
   if (command === "status") return printStatus(root);
+
+  if (command === "doctor") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    const report = await runDoctor(root, {
+      requireSearch: args.includes("--require-search"),
+      sessionId: optionValue(args, "--session") ?? "default",
+    });
+    console.log(report.text);
+    return report.ok ? 0 : 1;
+  }
 
   if (command === "check") {
     if (!subcommand) return fail("Usage: mewoflow check <research|grill|plan|implement|verify|archive>");
@@ -71,23 +83,25 @@ async function checkGate(root: string, gate: Gate): Promise<number> {
   if (task.gate !== gate) return fail(`Current gate is ${task.gate}, not ${gate}.`);
 
   const session = await loadSession(root);
+  let markdown = "";
   const validation =
     gate === "research"
-      ? validateResearch(await readTaskMarkdown(root, task, "research.md"), session)
+      ? validateResearch((markdown = await readTaskMarkdown(root, task, "research.md")), session)
       : gate === "grill"
-        ? validateGrill(await readTaskMarkdown(root, task, "grill.md"))
+        ? validateGrill((markdown = await readTaskMarkdown(root, task, "grill.md")))
         : gate === "plan"
-          ? validatePlan(await readTaskMarkdown(root, task, "plan.md"))
+          ? validatePlan((markdown = await readTaskMarkdown(root, task, "plan.md")))
           : gate === "verify"
-            ? validateVerify(await readTaskMarkdown(root, task, "verify.md"))
+            ? validateVerify((markdown = await readTaskMarkdown(root, task, "verify.md")))
             : gate === "archive"
-              ? validateArchive(await readTaskMarkdown(root, task, "archive.md"), task)
+              ? validateArchive((markdown = await readTaskMarkdown(root, task, "archive.md")), task)
               : { ok: true, errors: [] };
 
   if (!validation.ok) return fail(validation.errors.join("\n"));
 
   const nextGate = nextGateForCheck(gate);
   if (!nextGate) return fail(`No next gate for ${gate}.`);
+  if (gate === "archive") await appendArchiveToJournal(root, task, markdown);
   await advanceTask(root, task, nextGate);
   console.log(`Gate ${gate} passed. Next gate: ${nextGate}.`);
   return 0;

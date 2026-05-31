@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathExists, readJson, readTextIfExists, writeFileEnsured, writeJson } from "./fs.js";
+import { appendFileEnsured, pathExists, readJson, readTextIfExists, writeFileEnsured, writeJson } from "./fs.js";
 
 export type Gate = "research" | "grill" | "plan" | "implement" | "verify" | "archive" | "done";
 export type TaskType = "standard" | "epic";
@@ -221,6 +221,22 @@ export async function readTaskMarkdown(root: string, task: Task, file: string): 
   return (await readTextIfExists(taskFile(root, task.id, file))) ?? "";
 }
 
+export async function appendArchiveToJournal(root: string, task: Task, archiveText: string): Promise<void> {
+  const completedAt = new Date().toISOString();
+  const entry = [
+    "",
+    `## ${todayIsoDate()} ${task.title}`,
+    "",
+    `- Task: ${task.id}`,
+    `- Type: ${task.type}`,
+    `- Completed: ${completedAt}`,
+    "",
+    archiveText.trim(),
+    "",
+  ].join("\n");
+  await appendFileEnsured(path.join(mewoflowDir(root), "journal.md"), entry);
+}
+
 async function updateSession(
   root: string,
   sessionId: string,
@@ -265,7 +281,7 @@ function planTemplate(): string {
 }
 
 function verifyTemplate(): string {
-  return `# Verify\n\n## Result\n- blocked\n\n## Commands Run\n| Command | Result | Evidence |\n|---|---|---|\n\n## Critical Path\n| Path | Result | Evidence |\n|---|---|---|\n\n## Notes\n`;
+  return `# Verify\n\n## Result\n- blocked\n\n## Commands Run\n| Command | Result | Evidence |\n|---|---|---|\n\n## Critical Path\n| Path | Result | Evidence |\n|---|---|---|\n\n## Review\nReviewer:\nResult:\nFindings:\n\n## Notes\n`;
 }
 
 function archiveTemplate(): string {

@@ -12,10 +12,15 @@ describe("initProject", () => {
 
     await expect(fs.stat(path.join(root, ".mewoflow", "rules.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "workflow.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".mewoflow", "journal.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".mewoflow", "specs", "coding.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".mewoflow", "specs", "testing.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".mewoflow", "specs", "agent.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "tasks", ".gitkeep"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "settings.json"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"))).resolves.toBeTruthy();
   });
 
   it("preserves user-edited rules and workflow files", async () => {
@@ -31,6 +36,24 @@ describe("initProject", () => {
 
     await expect(fs.readFile(rulesFile, "utf8")).resolves.toBe("custom rules\n");
     await expect(fs.readFile(workflowFile, "utf8")).resolves.toBe("custom workflow\n");
+  });
+
+  it("preserves generated local loop files on repeated init", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-init-"));
+    const journalFile = path.join(root, ".mewoflow", "journal.md");
+    const codingSpecFile = path.join(root, ".mewoflow", "specs", "coding.md");
+    const doctorSkillFile = path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md");
+
+    await initProject(root);
+    await fs.writeFile(journalFile, "custom journal\n", "utf8");
+    await fs.writeFile(codingSpecFile, "custom coding spec\n", "utf8");
+    await fs.writeFile(doctorSkillFile, "custom doctor skill\n", "utf8");
+
+    await initProject(root);
+
+    await expect(fs.readFile(journalFile, "utf8")).resolves.toBe("custom journal\n");
+    await expect(fs.readFile(codingSpecFile, "utf8")).resolves.toBe("custom coding spec\n");
+    await expect(fs.readFile(doctorSkillFile, "utf8")).resolves.toBe("custom doctor skill\n");
   });
 
   it("merges Claude Code hooks without duplicating them", async () => {

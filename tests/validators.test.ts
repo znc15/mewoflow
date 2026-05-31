@@ -85,8 +85,24 @@ User Answer:
 | Command | Result | Evidence |
 |---|---|---|
 | npm test | passed | 1 test passed |
+
+## Review
+Reviewer: main-agent
+Result: passed
+Findings: No blocking issues.
 `).ok,
     ).toBe(true);
+
+    expect(
+      validateVerify(`# Verify
+## Result
+- passed
+## Commands Run
+| Command | Result | Evidence |
+|---|---|---|
+| npm test | passed | 1 test passed |
+`).ok,
+    ).toBe(false);
 
     const task: Task = {
       id: "task",

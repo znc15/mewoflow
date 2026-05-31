@@ -10,6 +10,7 @@ import {
   requiredImplementationReads,
   setActiveTask,
   type TaskType,
+  type Task,
 } from "./task.js";
 
 export type HookInput = {
@@ -79,6 +80,10 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
 
   const task = await getActiveTask(root, input.session_id ?? "default");
   if (!task) return allowPreToolUse();
+
+  if (isActiveTaskEvidenceTarget(target, task) || isActiveTaskEvidenceCommand(command, task)) {
+    return allowPreToolUse();
+  }
 
   if (task.gate !== "implement") {
     return deny(`Current MewoFlow gate is ${task.gate}. Editing is blocked until the implement gate.`);
@@ -163,4 +168,19 @@ function isProtectedTarget(target: string): boolean {
 
 function isProtectedCommand(command: string): boolean {
   return /\.mewoflow[\\/]tasks[\\/].*[\\/]task\.json|\.mewoflow[\\/]runtime/i.test(command);
+}
+
+function isActiveTaskEvidenceTarget(target: string, task: Task): boolean {
+  const base = `.mewoflow/tasks/${task.id}/`;
+  return evidenceMarkdownFiles().some((file) => target === `${base}${file}`);
+}
+
+function isActiveTaskEvidenceCommand(command: string, task: Task): boolean {
+  const normalized = command.replace(/\\/g, "/");
+  const base = `.mewoflow/tasks/${task.id}/`;
+  return evidenceMarkdownFiles().some((file) => normalized.includes(`${base}${file}`));
+}
+
+function evidenceMarkdownFiles(): string[] {
+  return ["research.md", "grill.md", "plan.md", "verify.md", "archive.md"];
 }

@@ -64,4 +64,32 @@ describe("hooks", () => {
     const allowed = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
     expect(JSON.stringify(allowed)).not.toContain("deny");
   });
+
+  it("allows active task evidence markdown writes before implement", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
+    const active = await loadSession(root, "s1");
+    const task = await loadTask(root, active.activeTaskId!);
+
+    const allowedEdit = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: `.mewoflow/tasks/${task.id}/research.md` },
+    });
+    expect(JSON.stringify(allowedEdit)).not.toContain("deny");
+
+    const allowedCommand = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: `Set-Content .mewoflow/tasks/${task.id}/grill.md 'ok'` },
+    });
+    expect(JSON.stringify(allowedCommand)).not.toContain("deny");
+
+    const blockedTaskJson = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: `.mewoflow/tasks/${task.id}/task.json` },
+    });
+    expect(JSON.stringify(blockedTaskJson)).toContain("deny");
+  });
 });

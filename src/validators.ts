@@ -27,7 +27,7 @@ export function validatePlan(text: string): ValidationResult {
 }
 
 export function validateVerify(text: string): ValidationResult {
-  const errors = requireSections(text, ["## Result"]);
+  const errors = requireSections(text, ["## Result", "## Review"]);
   if (!/## Result[\s\S]*?-\s*passed/i.test(text)) {
     errors.push("Verify result must be passed.");
   }

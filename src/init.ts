@@ -18,9 +18,14 @@ type ClaudeSettings = Record<string, unknown> & {
 export async function initProject(root = process.cwd()): Promise<void> {
   await writeFileIfMissing(path.join(root, ".mewoflow", "rules.md"), rulesTemplate());
   await writeFileIfMissing(path.join(root, ".mewoflow", "workflow.md"), workflowTemplate());
+  await writeFileIfMissing(path.join(root, ".mewoflow", "journal.md"), journalTemplate());
+  await writeFileIfMissing(path.join(root, ".mewoflow", "specs", "coding.md"), codingSpecTemplate());
+  await writeFileIfMissing(path.join(root, ".mewoflow", "specs", "testing.md"), testingSpecTemplate());
+  await writeFileIfMissing(path.join(root, ".mewoflow", "specs", "agent.md"), agentSpecTemplate());
   await writeFileEnsured(path.join(root, ".mewoflow", "tasks", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), hookShimTemplate());
+  await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"), doctorSkillTemplate());
   await writeMergedClaudeSettings(path.join(root, ".claude", "settings.json"));
 }
 
@@ -97,12 +102,28 @@ function workflowTemplate(): string {
   return `# MewoFlow Workflow\n\nnone -> research -> grill -> plan -> implement -> verify -> archive -> done\n`;
 }
 
+function journalTemplate(): string {
+  return `# MewoFlow Journal\n\nTask archive summaries are appended here when \`mewoflow check archive\` passes.\n`;
+}
+
+function codingSpecTemplate(): string {
+  return `# Coding Spec\n\nKeep this file short. Add project-specific coding conventions that AI agents must read before implementation.\n`;
+}
+
+function testingSpecTemplate(): string {
+  return `# Testing Spec\n\nKeep this file short. Add project-specific testing commands, critical paths, and evidence requirements.\n`;
+}
+
+function agentSpecTemplate(): string {
+  return `# Agent Spec\n\nKeep this file short. Add project-specific AI workflow expectations, review rules, and known pitfalls.\n`;
+}
+
 function hookShimTemplate(): string {
   return `#!/usr/bin/env node\nconst { spawnSync } = require("node:child_process");\nconst result = spawnSync("npx", ["mewoflow", "hook", ...process.argv.slice(2)], { stdio: "inherit", shell: true });\nprocess.exit(result.status ?? 1);\n`;
 }
 
-function claudeSettingsTemplate(): string {
-  return `${JSON.stringify({ hooks: mewoflowHooks() }, null, 2)}\n`;
+function doctorSkillTemplate(): string {
+  return `---\ndescription: Run MewoFlow doctor with a forced search-backed health check. Use when the user asks to check whether MewoFlow hooks, workflow files, and search evidence are working.\ndisable-model-invocation: true\n---\n\n# MewoFlow Doctor\n\nRun this skill when the user invokes \`/mewoflow-doctor\` or asks to check whether MewoFlow is working.\n\n## Required flow\n\n1. Use Claude Code WebSearch first. Search for current Claude Code hooks or custom skills documentation so the session records search evidence.\n2. Run:\n\n\`\`\`bash\nmewoflow doctor --require-search\n\`\`\`\n\n3. Report PASS/WARN/FAIL items exactly.\n4. If the doctor fails, explain the smallest next fix. Do not claim MewoFlow is healthy unless the command exits successfully.\n`;
 }
 
 function mewoflowHooks(): Record<string, ClaudeHookGroup[]> {

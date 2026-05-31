@@ -7,7 +7,7 @@ import { writeFileEnsured } from "../src/fs.js";
 import { handlePostToolUse, handlePreToolUse, handleUserPromptSubmit } from "../src/hooks.js";
 import { loadSession, loadTask, taskFile } from "../src/task.js";
 
-describe("MewoFlow v0.1 workflow", () => {
+describe("MewoFlow local workflow", () => {
   it("runs the required local workflow gates", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-e2e-"));
 
@@ -138,6 +138,11 @@ No auth rewrite.
 |---|---|---|
 | Login | passed | user can login |
 
+## Review
+Reviewer: main-agent
+Result: passed
+Findings: No blocking issues.
+
 ## Notes
 - Verified.
 `,
@@ -167,5 +172,7 @@ Login bug fixed.
     );
     await expect(main(["check", "archive"], root)).resolves.toBe(0);
     expect((await loadTask(root, taskId)).gate).toBe("done");
+    await expect(fs.readFile(path.join(root, ".mewoflow", "journal.md"), "utf8")).resolves.toContain("Login bug fixed.");
+    await expect(fs.readFile(path.join(root, ".mewoflow", "journal.md"), "utf8")).resolves.toContain(taskId);
   });
 });
