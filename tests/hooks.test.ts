@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit } from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
-import { loadSession, loadTask, recordReadFile, setActiveTask, taskFile } from "../src/task.js";
+import { loadSession, loadTask, recordReadFile, sessionFile, taskFile } from "../src/task.js";
 
 describe("hooks", () => {
   it("does not create a workflow for simple prompts", async () => {
@@ -18,6 +18,19 @@ describe("hooks", () => {
   it("does not create a workflow for conversational prompts after init", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "你好", session_id: "s1" });
+
+    expect(String(output.additionalContext)).toContain("simple");
+
+    const session = await loadSession(root, "s1");
+    expect(session.activeTaskId).toBeUndefined();
+
+    const stop = await handleStop(root, { session_id: "s1" });
+    expect(stop).toEqual({});
+  });
+
+  it("does not create a workflow for mewoflow doctor slash prompts", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const output = await handleUserPromptSubmit(root, { prompt: "/mewoflow-doctor", session_id: "s1" });
 
     expect(String(output.additionalContext)).toContain("simple");
 
@@ -104,5 +117,36 @@ describe("hooks", () => {
       tool_input: { file_path: `.mewoflow/tasks/${task.id}/task.json` },
     });
     expect(JSON.stringify(blockedTaskJson)).toContain("deny");
+  });
+
+  it("allows read-only bash redirection but still blocks file redirection writes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
+
+    const allowed = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "mewoflow doctor --require-search 2>&1" },
+    });
+    expect(JSON.stringify(allowed)).not.toContain("deny");
+
+    const blocked = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "echo ok > report.txt" },
+    });
+    expect(JSON.stringify(blocked)).toContain("deny");
+  });
+
+  it("recovers from corrupted session JSON without crashing stop", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const file = sessionFile(root, "s1");
+    await writeFileEnsured(file, '{"activeTaskId":"broken"} trailing');
+
+    const session = await loadSession(root, "s1");
+    expect(session).toEqual({ readFiles: [], searchTools: [], commands: [] });
+
+    await expect(handleStop(root, { session_id: "s1" })).resolves.toEqual({});
+    await expect(readText(file)).resolves.toContain('"readFiles": []');
   });
 });

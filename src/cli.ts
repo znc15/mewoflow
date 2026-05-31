@@ -15,7 +15,7 @@ import {
 import { validateArchive, validateGrill, validatePlan, validateResearch, validateVerify } from "./validators.js";
 import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit, type HookInput } from "./hooks.js";
 
-const version = "0.2.3";
+const version = "0.2.4";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;

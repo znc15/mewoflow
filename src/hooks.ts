@@ -23,8 +23,9 @@ export type HookInput = {
 export type PromptClassification = "simple" | TaskType;
 
 export function classifyPrompt(prompt: string): PromptClassification {
+  if (isMetaPrompt(prompt)) return "simple";
   if (/系统|平台|架构|工具集|大型重构|workflow|agent/i.test(prompt)) return "epic";
-  if (/修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|doctor|hook|功能/i.test(prompt)) {
+  if (/修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt)) {
     return "standard";
   }
   if (/颜色|文案|typo|样式|小改动|margin|padding|div/i.test(prompt)) return "simple";
@@ -159,9 +160,20 @@ function isSearchTool(tool: string): boolean {
 function isWriteAttempt(tool: string, command: string): boolean {
   if (/^(Edit|Write|MultiEdit|NotebookEdit)$/i.test(tool)) return true;
   if (tool !== "Bash") return false;
-  return /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b|>|npm\s+install|pnpm\s+add|yarn\s+add/i.test(
-    command,
+  return (
+    /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b|npm\s+install|pnpm\s+add|yarn\s+add/i.test(
+      command,
+    ) || hasShellWriteRedirection(command)
   );
+}
+
+function isMetaPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  return /^\/mewoflow(?:-[a-z0-9-]+)?\b/i.test(trimmed) || /^mewoflow\s+(doctor|status|help|version|init|check|hook)\b/i.test(trimmed);
+}
+
+function hasShellWriteRedirection(command: string): boolean {
+  return /(^|\s)(?:\d{0,2})?>>?(?!&)/.test(command);
 }
 
 function isProtectedTarget(target: string): boolean {

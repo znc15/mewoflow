@@ -141,14 +141,15 @@ export async function advanceTask(root: string, task: Task, nextGate: Gate): Pro
 
 export async function loadSession(root: string, sessionId = "default"): Promise<SessionState> {
   const file = sessionFile(root, sessionId);
-  if (!(await pathExists(file))) return { readFiles: [], searchTools: [], commands: [] };
-  const session = await readJson<Partial<SessionState>>(file);
-  return {
-    activeTaskId: session.activeTaskId,
-    readFiles: session.readFiles ?? [],
-    searchTools: session.searchTools ?? [],
-    commands: session.commands ?? [],
-  };
+  if (!(await pathExists(file))) return emptySessionState();
+  try {
+    const session = await readJson<Partial<SessionState>>(file);
+    return normalizeSessionState(session);
+  } catch {
+    const session = emptySessionState();
+    await writeJson(file, session);
+    return session;
+  }
 }
 
 export async function saveSession(root: string, sessionId: string, session: SessionState): Promise<void> {
@@ -248,6 +249,24 @@ async function updateSession(
     const defaultSession = updater(await loadSession(root, "default"));
     await saveSession(root, "default", defaultSession);
   }
+}
+
+function emptySessionState(): SessionState {
+  return { readFiles: [], searchTools: [], commands: [] };
+}
+
+function normalizeSessionState(session: Partial<SessionState>): SessionState {
+  return {
+    activeTaskId: typeof session.activeTaskId === "string" ? session.activeTaskId : undefined,
+    readFiles: Array.isArray(session.readFiles) ? session.readFiles.filter((file): file is string => typeof file === "string") : [],
+    searchTools: Array.isArray(session.searchTools)
+      ? session.searchTools.filter(
+          (entry): entry is { tool: string; at: string } =>
+            Boolean(entry) && typeof entry === "object" && typeof entry.tool === "string" && typeof entry.at === "string",
+        )
+      : [],
+    commands: Array.isArray(session.commands) ? session.commands.filter((command): command is string => typeof command === "string") : [],
+  };
 }
 
 async function latestTaskId(root: string): Promise<string | null> {

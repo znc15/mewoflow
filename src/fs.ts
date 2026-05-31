@@ -24,7 +24,15 @@ export async function readJson<T>(file: string): Promise<T> {
 }
 
 export async function writeJson(file: string, value: unknown): Promise<void> {
-  await writeFileEnsured(file, `${JSON.stringify(value, null, 2)}\n`);
+  const tempFile = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    await writeFileEnsured(tempFile, `${JSON.stringify(value, null, 2)}\n`);
+    await fs.rename(tempFile, file);
+  } finally {
+    if (await pathExists(tempFile)) {
+      await fs.rm(tempFile, { force: true });
+    }
+  }
 }
 
 export async function pathExists(file: string): Promise<boolean> {
