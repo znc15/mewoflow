@@ -1,63 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { validateArchive, validateGrill, validatePlan, validateResearch, validateVerify } from "../src/validators.js";
-import type { SessionState, Task } from "../src/task.js";
+import { validateGrill } from "../src/validators.js";
 
-const sessionWithSearch: SessionState = {
-  readFiles: [],
-  searchTools: [{ tool: "WebSearch", at: "2026-05-31T12:00:00.000Z" }],
-  commands: [],
-};
-
-describe("validators", () => {
-  it("requires search evidence for research", () => {
-    const markdown = `# Research
-
-## Search Evidence
-- Tool Used: WebSearch
-
-## Sources
-| Source | Type | Why It Matters |
-|---|---|---|
-| https://code.claude.com/docs/en/hooks | official | current hook docs |
-
-## Current Facts
-- Hooks can block tool use.
-
-## Impact On This Task
-- Use PreToolUse.
-
-## Unknowns
-- None
-`;
-
-    expect(validateResearch(markdown, sessionWithSearch).ok).toBe(true);
-    expect(validateResearch(markdown, { readFiles: [], searchTools: [], commands: [] }).ok).toBe(false);
-  });
-
-  it("allows user-provided research sources without logged search", () => {
-    const markdown = `# Research
-
-## Search Evidence
-- Tool Used: user-provided-source
-
-## Sources
-| Source | Type | Why It Matters |
-|---|---|---|
-| https://example.com | user-provided-source | user supplied docs |
-
-## Current Facts
-- Fact.
-
-## Impact On This Task
-- Impact.
-`;
-
-    expect(validateResearch(markdown, { readFiles: [], searchTools: [], commands: [] }).ok).toBe(true);
-  });
-
-  it("validates grill and plan documents", () => {
-    expect(
-      validateGrill(`# Grill
+const validGrill = `# Grill
 
 ## Grill Skill
 - Used: grill-me
@@ -66,121 +10,76 @@ describe("validators", () => {
 ## Question Log
 
 ### Q1
-Question: Should the fix include regression verification?
-Recommended Answer: Yes.
+Question: What is the MVP scope?
+Recommended Answer: Keep only player, search, playlist, and profile.
 User Answer: Yes.
-Decision: Include verification evidence.
+Decision: MVP excludes backend.
+
+## Decision Coverage
+Product Goal: Build a music player MVP.
+MVP Scope: Player, search, playlist, profile.
+Non-goals: Backend and auth are excluded.
+Pages/Navigation: Home, search, playlist, profile.
+Data Source: Local JSON and sample audio.
+Core Interactions: Play, pause, seek, volume, mode switching.
+UI/Responsive: Dark responsive layout.
+Error/Empty States: Empty search and audio load failure states.
+Testing/Acceptance: Build, player controls, search filtering, responsive smoke checks.
+Risks: Audio autoplay restrictions and scope creep.
+Budget/Timebox: Keep to a small MVP slice.
+Infra/Deployment: Static frontend deployment.
+Security/Privacy: No auth or private user data in MVP.
+Failure Modes/Rollback: Fall back to sample data and disable broken audio items.
 
 ## Locked Decisions
-- Fix must include proof.
+- Use pure frontend MVP.
 
 ## Acceptance Criteria
-- Login works.
+- Player controls work.
 
 ## Grill Completion Judgment
-Status: no-meaningful-questions-left
-Reason: Remaining choices are implementation details and do not change the plan.
+Status: complete
+Stopped By: model
+Reason: All high-risk product, UX, data, and testing decisions are covered.
+Low-value Follow-ups: Exact copywriting can be adjusted during implementation.
 
 ## Open Questions
 - None
-`).ok,
-    ).toBe(true);
+`;
 
-    expect(
-      validatePlan(`# Plan
-## Goal
-## Scope
-## Non-goals
-## Steps
-## Verification
-`).ok,
-    ).toBe(true);
+describe("validateGrill", () => {
+  it("accepts grill-me evidence with decision coverage and model stop judgment", () => {
+    expect(validateGrill(validGrill)).toEqual({ ok: true, errors: [] });
   });
 
-  it("requires grill-me skill usage and completion judgment", () => {
-    expect(
-      validateGrill(`# Grill
+  it("requires direct use of the project-local grill-me skill", () => {
+    const result = validateGrill(validGrill.replace("- Used: grill-me", "- Used: custom questions"));
 
-## Grill Skill
-- Used: other-skill
-
-## Question Log
-Question: Q?
-Recommended Answer: A.
-User Answer: A.
-Decision: D.
-
-## Locked Decisions
-
-## Acceptance Criteria
-
-## Grill Completion Judgment
-Status: no-meaningful-questions-left
-Reason: Done.
-`).ok,
-    ).toBe(false);
-
-    expect(
-      validateGrill(`# Grill
-
-## Grill Skill
-- Used: grill-me
-
-## Question Log
-Question: Q?
-Recommended Answer: A.
-User Answer: A.
-Decision: D.
-
-## Locked Decisions
-
-## Acceptance Criteria
-
-## Grill Completion Judgment
-Status: no-meaningful-questions-left
-Reason:
-`).ok,
-    ).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Grill must record direct use of the project-local grill-me skill.");
   });
 
-  it("validates verify and archive documents", () => {
-    expect(
-      validateVerify(`# Verify
-## Result
-- passed
-## Commands Run
-| Command | Result | Evidence |
-|---|---|---|
-| npm test | passed | 1 test passed |
+  it("requires testing and acceptance coverage", () => {
+    const result = validateGrill(validGrill.replace("Testing/Acceptance: Build, player controls, search filtering, responsive smoke checks.", ""));
 
-## Review
-Reviewer: main-agent
-Result: passed
-Findings: No blocking issues.
-`).ok,
-    ).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Missing Testing/Acceptance:");
+    expect(result.errors).toContain("Grill requires non-empty Testing/Acceptance.");
+  });
 
-    expect(
-      validateVerify(`# Verify
-## Result
-- passed
-## Commands Run
-| Command | Result | Evidence |
-|---|---|---|
-| npm test | passed | 1 test passed |
-`).ok,
-    ).toBe(false);
+  it("requires model or assistant stop judgment", () => {
+    const result = validateGrill(validGrill.replace("Stopped By: model", "Stopped By: user"));
 
-    const task: Task = {
-      id: "task",
-      title: "task",
-      type: "standard",
-      gate: "archive",
-      created_at: "2026-05-31T12:00:00.000Z",
-      updated_at: "2026-05-31T12:00:00.000Z",
-      overrides: [],
-    };
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Grill completion judgment must say it was stopped by model/assistant judgment.");
+  });
 
-    expect(validateArchive("# Archive\n\n## Summary\nDone\n\n## Verification\nPassed\n", task).ok).toBe(true);
+  it("requires non-empty completion reason", () => {
+    const result = validateGrill(
+      validGrill.replace("Reason: All high-risk product, UX, data, and testing decisions are covered.", "Reason:"),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Grill requires non-empty Reason.");
   });
 });

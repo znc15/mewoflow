@@ -1,78 +1,31 @@
-<p align="center">
-  <h1 align="center">MewoFlow</h1>
-</p>
 
-<p align="center">
-  <strong>让 Claude Code 按证据驱动的开发流程工作。</strong><br/>
-  <sub>一个本地优先的 Claude Code workflow gate：强制 research、grill、plan、implement、verify、archive，不靠模型自觉。</sub>
-</p>
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/mewoflow"><img src="https://img.shields.io/npm/v/mewoflow.svg?style=flat-square&color=2563eb" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/mewoflow"><img src="https://img.shields.io/npm/dw/mewoflow?style=flat-square&color=cb3837&label=downloads" alt="npm downloads" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a.svg?style=flat-square" alt="license" /></a>
-  <img src="https://img.shields.io/badge/client-Claude%20Code-111111?style=flat-square" alt="Claude Code" />
-</p>
+# MewoFlow
 
-## Why MewoFlow?
 
-很多 AI 编码流程靠 `CLAUDE.md`、skills 或提示词约束模型，但这些规则会被上下文压缩冲淡，也可能被模型忽略。MewoFlow 把关键流程放到 Claude Code hooks 和本地状态文件里，让“必须搜索、必须澄清、必须计划、必须验证”变成可以检查的门禁。
 
-| Capability | What it changes |
-| --- | --- |
-| **Claude Code hooks** | 在用户提交需求、工具调用前后、会话结束时检查当前任务状态。 |
-| **Task-centered workflow** | 每个任务都有独立目录，保存 research、grill、plan、verify、archive 证据。 |
-| **Search gate** | 研究阶段要求使用 Claude Code 自带 WebSearch、WebFetch、MCP 搜索，或记录用户提供来源。 |
-| **Implementation gate** | 未到 `implement` 阶段前阻止代码修改；实现前要求重新读取关键上下文。 |
-| **Verification gate** | 没有命令输出、关键链路证据和 review 记录，就不能声称完成。 |
-| **Agent memory files** | 生成 `AGENTS.md` 和 `CLAUDE.md`，用软引导配合 hooks 硬门禁。 |
+**让开发按证据驱动的开发流程工作。**  
+基于Trellis和grill-me skill两个项目结合的新项目
 
-MewoFlow 只解决一个具体问题：让 Claude Code 在本地开发任务中按证据驱动的流程工作。它不做云端同步、账号系统、团队权限，也不管理任何搜索 API Key。
 
-## Prerequisites
 
-- Node.js >= 18
-- npm
-- Claude Code
+## 什么是 MewoFlow?
 
-## Installation
+国产模型在某些情况下在不断约束的情况下，还是会自己去编写，而不是遵守开发流程，于是参考了Trellis项目对我常用的工作流进行的整合
+MewoFlow 只解决一个具体问题：让大模型在本地开发任务中按证据驱动的流程工作。
 
-推荐直接用 `npx` 在目标项目里初始化，不需要提前安装：
-
-```bash
-npx mewoflow init
-```
-
-如果你想把 `mewoflow` 命令安装到全局环境，使用 `-g`：
+## 安装
 
 ```bash
 npm install -g mewoflow
+```
+
+## 使用方法
+
+在项目根目录执行：
+
+```bash
 mewoflow init
-```
-
-`-g` 表示 global，全局安装。`@` 不是全局安装参数，它只用于 scoped package 名称，例如 `@scope/package`。MewoFlow 当前包名是 `mewoflow`，所以不需要写 `@`。
-
-也可以把它安装到当前项目里：
-
-```bash
-npm install --save-dev mewoflow
-npx mewoflow init
-```
-
-## Quick Start
-
-在 Claude Code 项目根目录执行：
-
-```bash
-npx mewoflow init
-```
-
-初始化本身只会写入配置、hooks 和本地流程文件，不会创建任务。只有明确的开发请求才会进入 workflow。
-
-初始化后，先在 Claude Code 里运行：
-
-```txt
-/mewoflow
 ```
 
 它会检查本地 wiring、必要时重新初始化，并确认 hooks 与 skill 是否处于可工作状态。
@@ -83,25 +36,48 @@ npx mewoflow init
 修复登录 bug
 ```
 
-MewoFlow 会创建任务目录，并要求 AI 按顺序推进：
+MewoFlow 不会立刻创建任务目录。它会先提出一个 draft pending task。Claude 必须先用受控命令提交自己判断出的 title/slug：
 
-```txt
-research -> grill -> plan -> implement -> verify -> archive
+```bash
+npx mewoflow propose-task --title "修复登录 bug" --slug "login-bug"
 ```
 
-其中 `grill` gate 会直接使用初始化时写入项目的 `.claude/skills/grill-me/SKILL.md`，要求 AI 一次只问一个关键问题，给出推荐答案，直到它判断继续追问已经没有意义，再把结论和停止追问的理由写入 `grill.md`。
+然后再明确询问你是否创建任务。你确认后，例如回复 `确认创建任务`，才会通过 `npx mewoflow confirm-task` 或 `npx mewoflow check pending-task-confirmation` 创建 `.mewoflow/tasks/<date>-<slug>/` 并进入正式 workflow。draft id 不会作为最终 task id。
+
+如果 Claude Code 用结构化问答收集了你的确认，可能不会触发新的 `UserPromptSubmit` hook。这种情况下 Claude 应先确保已运行 `npx mewoflow propose-task --title "..." --slug "..."`，再运行 `npx mewoflow confirm-task` 或 `npx mewoflow check pending-task-confirmation` 来创建任务；不允许手动 `mkdir .mewoflow/tasks/...` 或写任务状态文件。
+
+```txt
+pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive
+```
+
+其中 `research.md` 必须写 `## Tool Evidence`，并证明用过 WebSearch、WebFetch、MCP、skill 或明确用户来源；不能把用户拒绝回答的问题或假设写成事实。
+
+`grill` gate 会直接使用初始化时写入项目的 `.claude/skills/grill-me/SKILL.md`，要求 AI 一次只问一个关键问题，给出推荐答案，并覆盖产品目标、MVP 范围、非目标、页面/导航、数据来源、核心交互、响应式 UI、空/错态、测试/验收、风险、预算/时间盒、部署、隐私安全、失败模式和回滚。只有当模型/assistant 判断继续追问已经没有意义时，才能把结论、停止追问者和理由写入 `grill.md`。
+
+`plan` gate 也不会自动进入实现。Claude 在最终写计划前必须再次联网/MCP/skill 搜索快捷方案或现成方案，并在 `## Shortcut / Existing Solution Scan` 中记录。计划还必须包含 MVP 切片、阶段、延后项、风险和验证方式。从 0 开始的大项目应先作为 parent epic 完成全局 research/grill/plan，再在 `## Parent / Child Task Breakdown` 里列出 child tasks，计划批准后可用 `mewoflow split-task --from-plan` 拆分逐一完成。
+
+Claude 必须先把计划展示给你，等你明确回复 `同意计划`、`确认执行` 或 `开始实现` 之类的批准后，`mewoflow check plan` 才能进入 `implement`。如果批准来自结构化问答，Claude 应运行：
+
+```bash
+npx mewoflow approve-plan --prompt "用户批准计划"
+```
 
 当 hooks 正常触发时，Claude Code transcript 里会出现类似 `猫咪正在监控你的需求喵！`、`猫咪正在检查工具调用喵！` 的提示。没有看到提示时，先运行 `/mewoflow` 或 `mewoflow doctor` 检查 `.claude/settings.json` 的 hook wiring。
 
-在 `research`、`grill`、`plan` 通过前，MewoFlow 会阻止脚手架、安装依赖和实现文件编辑。比如 `pnpm create next-app@latest .`、`npm install`、`pnpm add` 会被要求先完成 `research -> grill -> plan`，避免 AI 询问完需求后直接创建项目。
+在 pending task 未确认、`research` / `grill` / `plan` 未通过、或计划尚未得到用户批准前，MewoFlow 会阻止脚手架、安装依赖和实现文件编辑。比如 `pnpm create next-app@latest .`、`npm install`、`pnpm add` 会被要求先完成任务确认、`research -> grill -> plan` 和用户批准，避免 AI 询问完需求后直接创建项目。
 
 常用命令：
 
 ```bash
 mewoflow status
+mewoflow propose-task --title "修复登录 bug" --slug "login-bug"
+mewoflow confirm-task
+mewoflow check pending-task-confirmation
 mewoflow check research
 mewoflow check grill
 mewoflow check plan
+mewoflow approve-plan --prompt "用户批准计划"
+mewoflow split-task --from-plan
 mewoflow check implement
 mewoflow check verify
 mewoflow check archive
@@ -154,14 +130,16 @@ CLAUDE.md
 
 Hook 职责：
 
-| Hook | Purpose |
-| --- | --- |
-| `UserPromptSubmit` | 判断请求类型，创建任务，注入当前 gate，并输出猫咪监控提示。 |
-| `PreToolUse` | 阻止过早改代码、脚手架和安装依赖，保护状态文件，允许写入当前任务证据。 |
-| `PostToolUse` | 记录文件读取、搜索工具调用和命令执行，并输出记录提示。 |
-| `Stop` | 任务未完成时阻止 AI 直接结束，并提醒继续当前 gate。 |
 
-如果当前没有 active task，`PreToolUse` 也会阻止高风险脚手架或依赖命令，提示先用 `/mewoflow` 建立或恢复任务。普通小改动不会因此被强制拉入完整 workflow。
+| Hook               | Purpose                                                |
+| ------------------ | ------------------------------------------------------ |
+| `UserPromptSubmit` | 判断请求类型，先提出 pending task，用户确认后创建任务，注入当前 gate，并输出猫咪监控提示。 |
+| `PreToolUse`       | 阻止 pending task 未确认、过早改代码、脚手架和安装依赖；保护状态文件，允许写入当前任务证据。  |
+| `PostToolUse`      | 记录文件读取、搜索工具调用和命令执行，并输出记录提示。                            |
+| `Stop`             | 任务未完成时阻止 AI 直接结束，并提醒继续当前 gate。                         |
+
+
+如果当前只有 pending task，`PreToolUse` 会阻止研究、脚手架和文件写入，直到你明确确认创建任务。唯一允许的 pending 写入口是 MewoFlow CLI 自己的受控命令：`mewoflow propose-task --title "..." --slug "..."` 记录模型建议，随后 `mewoflow confirm-task` / `mewoflow check pending-task-confirmation` 创建正式任务。如果当前没有 active task，`PreToolUse` 也会阻止高风险脚手架或依赖命令，提示先用 `/mewoflow` 建立或恢复任务。普通小改动不会因此被强制拉入完整 workflow。
 
 ## Troubleshooting
 
@@ -173,17 +151,31 @@ Hook 职责：
 
 ### Claude 询问后仍想直接创建项目
 
-这通常表示 active task 没有建立，或当前 gate 还停在 `research` / `grill` / `plan`。MewoFlow 会在工具调用前拦截脚手架和依赖命令，并提示先完成：
+这通常表示 pending task 还没有被你确认、active task 没有建立，或当前 gate 还停在 `research` / `grill` / `plan`。MewoFlow 会在工具调用前拦截脚手架和依赖命令，并提示先完成：
 
 ```txt
-research -> grill -> plan
+pending-task-confirmation -> research -> grill -> plan -> user-approval
 ```
 
-继续方式是先补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`，分别运行 `mewoflow check research`、`mewoflow check grill`、`mewoflow check plan`，进入 `implement` 后再创建项目或改代码。
+继续方式是：先运行 `mewoflow propose-task --title "..." --slug "..."` 固化模型建议的最终 task id，再确认是否创建任务；如果确认来自结构化问答，就运行 `mewoflow confirm-task` 或 `mewoflow check pending-task-confirmation`，不要手动写 `.mewoflow/tasks`；再补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`；分别运行 `mewoflow check research`、`mewoflow check grill`；展示计划并等你批准后，再运行 `mewoflow check plan` 进入 `implement`，最后才能创建项目或改代码。
+
+### 已确认但还是卡在 pending task
+
+如果 transcript 里显示你已经在 Claude 的选择题/结构化问答中点了“确认创建”，但 hook 仍提示 pending task，说明确认没有通过新的用户消息触发 `UserPromptSubmit`。这不是让 Claude 手动建目录的理由。正确做法是让 Claude 运行：
+
+```bash
+npx mewoflow check pending-task-confirmation
+```
+
+这些命令会由 MewoFlow CLI 从 session 中读取 pending task，创建正式任务目录，并把 gate 设为 `research`。
+
+### Claude 写完计划后仍想直接运行 `pnpm create`
+
+`mewoflow check plan` 要求显式用户批准。Claude 必须先展示 `plan.md`，等你明确说 `同意计划`、`确认执行`、`开始实现` 等批准语句后，hook 才会记录 plan approval。若批准来自结构化问答，应运行 `mewoflow approve-plan --prompt "..."`。没有该记录时，即使计划内容有效，也不能进入 `implement`，脚手架和实现写入会继续被拦截。
 
 ### `grill-me` 缺失或 grill 只问一轮
 
-`grill` 不是固定轮数限制，而是必须使用项目内置的 `.claude/skills/grill-me/SKILL.md`，持续追问到模型判断“继续问已经没有意义”。如果 `mewoflow doctor` 报 `.claude/skills/grill-me/SKILL.md` 缺失，或 `grill.md` 没有记录 `Used: grill-me` 与 `Grill Completion Judgment`，重新执行：
+`grill` 不是固定轮数限制，而是必须使用项目内置的 `.claude/skills/grill-me/SKILL.md`，持续追问到模型/assistant 判断“继续问已经没有意义”。`grill.md` 还必须覆盖产品目标、MVP 范围、非目标、页面/导航、数据来源、核心交互、响应式 UI、空/错态和测试/验收。如果 `mewoflow doctor` 报 `.claude/skills/grill-me/SKILL.md` 缺失，或 `grill.md` 没有记录 `Used: grill-me`、`Decision Coverage` 与 `Grill Completion Judgment`，重新执行：
 
 ```bash
 npx mewoflow init
@@ -193,14 +185,18 @@ npx mewoflow init
 
 ## Workflow Gates
 
-| Gate | Purpose | Evidence |
-| --- | --- | --- |
-| `research` | 获取最新资料和上下文 | 来源、事实、对任务的影响 |
-| `grill` | 直接使用 project-local `grill-me` 追问关键需求 | skill 使用记录、问题、推荐答案、用户答案、决策、验收标准、停止追问理由 |
-| `plan` | 写实现计划 | 目标、范围、非目标、步骤、验证方式 |
-| `implement` | 允许修改代码 | 已读取规则和任务上下文 |
-| `verify` | 用证据证明结果 | 命令输出、关键链路证据、review 记录 |
-| `archive` | 归档任务 | 总结、验证结果、后续事项 |
+
+| Gate                        | Purpose                              | Evidence                                                        |
+| --------------------------- | ------------------------------------ | --------------------------------------------------------------- |
+| `pending-task-confirmation` | 新开发需求先等待用户确认是否创建任务                   | draft pending id、模型提交 title/slug、猫咪提示、用户确认/取消                   |
+| `research`                  | 获取最新资料和上下文                           | Tool Evidence、来源、事实、假设、未知项、对任务的影响                               |
+| `grill`                     | 直接使用 project-local `grill-me` 追问关键需求 | skill 使用记录、问题、推荐答案、用户答案、决策覆盖、风险/预算/部署/安全/回滚、模型/assistant 停止追问理由 |
+| `plan`                      | 写实现计划                                | 快捷/现成方案扫描、MVP 切片、parent/child breakdown、阶段、延后项、风险、验证方式          |
+| `user-approval`             | 用户明确批准计划后才允许进入实现                     | plan approval 记录、用户批准原文                                         |
+| `implement`                 | 允许修改代码                               | 计划已批准，且已读取规则和任务上下文                                              |
+| `verify`                    | 用证据证明结果                              | 命令输出、关键链路证据、review 记录                                           |
+| `archive`                   | 归档任务                                 | 总结、验证结果、后续事项                                                    |
+
 
 ## Doctor
 
@@ -252,24 +248,33 @@ MewoFlow 会生成两个项目说明入口：
 
 MewoFlow 参考了 Trellis 的文件化上下文、任务证据、hooks/commands/skills 思想，但目标更窄：
 
-| Trellis | MewoFlow |
-| --- | --- |
-| 面向多 AI 编程工具和团队工作流 | 只先支持 Claude Code |
-| 提供 spec、workspace、tasks、skills、sub-agents、commands、hooks 等完整体系 | 只做本地开发流程门禁 |
-| 可演进为跨平台协作层 | 专注强制 research -> grill -> plan -> implement -> verify -> archive |
-| 平台能力更完整 | 不做云同步、账号、团队权限、搜索 API Key 管理 |
+
+| Trellis                                                        | MewoFlow                                                                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 面向多 AI 编程工具和团队工作流                                              | 只先支持 Claude Code                                                                                               |
+| 提供 spec、workspace、tasks、skills、sub-agents、commands、hooks 等完整体系 | 只做本地开发流程门禁                                                                                                     |
+| 可演进为跨平台协作层                                                     | 专注强制 pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive |
+| 平台能力更完整                                                        | 不做云同步、账号、团队权限、搜索 API Key 管理                                                                                    |
+
 
 ## CLI Reference
 
-| Command | Description |
-| --- | --- |
-| `mewoflow init` | 初始化 MewoFlow 文件和 Claude Code hooks。 |
-| `mewoflow status` | 查看当前任务和 gate。 |
-| `mewoflow doctor` | 检查本地文件、hook 配置、doctor skill 和任务状态。 |
-| `mewoflow doctor --require-search` | 要求当前 session 已记录搜索工具调用。 |
-| `mewoflow check <gate>` | 校验当前 gate 证据并进入下一阶段。 |
-| `mewoflow override <gate> --reason "..."` | 异常情况下跳过当前 gate。 |
-| `mewoflow hook <event>` | Claude Code hook 内部调用。 |
+
+| Command                                            | Description                                             |
+| -------------------------------------------------- | ------------------------------------------------------- |
+| `mewoflow init`                                    | 初始化 MewoFlow 文件和 Claude Code hooks。                     |
+| `mewoflow status`                                  | 查看当前任务和 gate。                                           |
+| `mewoflow doctor`                                  | 检查本地文件、hook 配置、doctor skill 和任务状态。                      |
+| `mewoflow doctor --require-search`                 | 要求当前 session 已记录搜索工具调用。                                 |
+| `mewoflow propose-task --title "..." --slug "..."` | 为 pending task 记录模型建议的最终标题和 slug。                       |
+| `mewoflow check pending-task-confirmation`         | 用户已确认 pending task 后，由 CLI 受控创建正式任务。                    |
+| `mewoflow confirm-task`                            | `check pending-task-confirmation` 的短别名。                 |
+| `mewoflow approve-plan --prompt "..."`             | 结构化批准没有触发用户消息时，受控记录 plan approval。                      |
+| `mewoflow split-task --from-plan`                  | parent epic 计划批准后，按 plan 中的 child task breakdown 拆分子任务。 |
+| `mewoflow check <gate>`                            | 校验当前 gate 证据并进入下一阶段。                                    |
+| `mewoflow override <gate> --reason "..."`          | 异常情况下跳过当前 gate。                                         |
+| `mewoflow hook <event>`                            | Claude Code hook 内部调用。                                  |
+
 
 ## Development
 

@@ -104,19 +104,28 @@ function agentsTemplate(): string {
     "",
     "This project uses MewoFlow to keep AI development work evidence-driven.",
     "",
-    "For standard and complex development tasks, follow the full workflow:",
+    "For standard and complex development tasks, first show the MewoFlow judgment and ask the user whether that judgment has a problem. After the user accepts the judgment, ask the user to confirm task creation, then follow the full workflow:",
     "",
     "```txt",
-    "research -> grill -> plan -> implement -> verify -> archive",
+    "judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive",
     "```",
     "",
     "Rules:",
     "",
-    "- Use current sources before planning or implementing.",
+    "- On every new user prompt, first make the MewoFlow judgment visible: decide whether it is a simple request, standard task, or epic task; state the reason; then ask the user whether this judgment has a problem before proposing a task or doing work.",
+    "- If the user says the judgment is wrong, ask for the corrected classification or clarified request. Do not propose or create a task until the judgment is accepted.",
+    "- Do not create task files or start research until the user explicitly accepts the judgment and then confirms the proposed MewoFlow task.",
+    "- For a pending task, first run `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\"`, then ask for/consume user confirmation with `mewoflow confirm-task` or `mewoflow check pending-task-confirmation`.",
+    "- Research must write `## Tool Evidence` and use Claude Code WebSearch, WebFetch, MCP search, a relevant skill, or explicit user-provided sources before planning or implementing.",
     "- During the `grill` gate, use the project-local `grill-me` skill directly; do not merely imitate it.",
-    "- Ask and record clarifying questions before locking the plan, and record why no meaningful questions remain before leaving `grill`.",
-    "- Do not edit implementation files before the active task reaches the `implement` gate.",
-    "- Do not claim completion without verification evidence.",
+    "- Ask and record clarifying questions before locking the plan; cover product goal, MVP scope, non-goals, navigation, data source, interactions, UI/responsive behavior, empty/error states, testing/acceptance, risks, budget/timebox, infra/deployment, security/privacy, and failure modes/rollback.",
+    "- Record that the model/assistant decided no meaningful questions remain before leaving `grill`.",
+    "- Before finalizing `plan.md`, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan and record `## Shortcut / Existing Solution Scan` plus MVP slice, phases, deferred work, risks, and verification.",
+    "- For from-scratch epic projects, keep the first task as the parent epic, list child tasks under `## Parent / Child Task Breakdown`, then split them with `mewoflow split-task --from-plan` after plan approval.",
+    "- Show the plan to the user and wait for explicit approval before running `mewoflow check plan` or entering implementation.",
+    "- If plan approval was collected through structured UI, run `mewoflow approve-plan --prompt \"...\"` before `mewoflow check plan`.",
+    "- Do not edit implementation files before the active task reaches the `implement` gate with plan approval recorded.",
+    "- Do not claim completion without command evidence, critical-path evidence, and review notes in `verify.md`.",
     "- Use `mewoflow status` to inspect the active task.",
     "- Use `mewoflow check <gate>` to advance a gate only after the evidence file is complete.",
     "- Use `mewoflow doctor` to check local wiring.",
@@ -138,19 +147,25 @@ function claudeTemplate(): string {
     "",
     "- Use `/mewoflow` to initialize or resume the local MewoFlow workflow entry point.",
     "- Use `/mewoflow-doctor` when asked to verify whether MewoFlow is working.",
-    "- Research must use Claude Code WebSearch, WebFetch, MCP search, or explicit user-provided sources before `mewoflow check research`.",
+    "- Before creating or skipping a task, visibly report the MewoFlow prompt judgment: simple / standard / epic and the reason, then ask whether the judgment has a problem.",
+    "- Do not propose a task until the user accepts the prompt judgment. If the user says the judgment is wrong, ask for the corrected classification or clarified request first.",
+    "- Pending task ids are not final. Use `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\"` before `mewoflow confirm-task` or `mewoflow check pending-task-confirmation`.",
+    "- Research must use Claude Code WebSearch, WebFetch, MCP search, relevant skill lookup, or explicit user-provided sources before `mewoflow check research`, and must write `## Tool Evidence`.",
     "- Grill must directly use the project-local `grill-me` skill from `.claude/skills/grill-me/SKILL.md` before `mewoflow check grill`.",
+    "- New development requests first become a pending judgment review. After the user accepts the judgment, create only a pending task proposal; ask the user to confirm before research or task file creation.",
+    "- Plan must include a fresh shortcut/existing-solution scan and be shown to the user before explicit approval. Use `mewoflow approve-plan --prompt \"...\"` when approval is captured structurally.",
+    "- From-scratch epic projects should use one parent epic for research/grill/plan, then split child tasks with `mewoflow split-task --from-plan` and complete children one by one.",
     "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
     "- Let hooks block incomplete work instead of bypassing the workflow.",
   ].join("\n") + "\n";
 }
 
 function rulesTemplate(): string {
-  return `# MewoFlow Rules\n\n- Follow the active task gate.\n- Standard and epic tasks must complete: research -> grill -> plan -> implement -> verify -> archive.\n- Use Claude Code WebSearch/WebFetch/MCP or user-provided sources during research.\n- Read this file plus task research/grill/plan before editing.\n- Do not claim completion without verify evidence.\n`;
+  return `# MewoFlow Rules\n\n- Follow the active task gate.\n- Standard and epic tasks must complete: judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive.\n- Before creating or skipping a task, make the MewoFlow prompt judgment visible: simple / standard / epic and why, then ask whether the judgment has a problem.\n- If the user says the judgment is wrong, ask for the corrected classification or clarified request before proposing or creating a task.\n- Do not create a task or start research until the user accepts the prompt judgment and then confirms the pending task proposal.\n- Pending task confirmation requires a model-proposed title/slug via \`mewoflow propose-task --title \"...\" --slug \"...\"\` before \`mewoflow confirm-task\` or \`mewoflow check pending-task-confirmation\`.\n- Use Claude Code WebSearch/WebFetch/MCP, relevant skill lookup, or user-provided sources during research; record them under \`## Tool Evidence\`.\n- Grill must use project-local grill-me, cover product/testing/risk/budget/infra/security/failure decisions, and record model/assistant stop judgment.\n- Before finalizing plan, run a fresh shortcut/existing-solution scan and record MVP slice, phases, deferred work, risks, and verification.\n- From-scratch epic projects should keep one parent task, list child tasks in plan, then split children with \`mewoflow split-task --from-plan\`.\n- Show plan to the user and record explicit approval before implementation; use \`mewoflow approve-plan --prompt \"...\"\` for structured approval.\n- Read this file plus task research/grill/plan before editing.\n- Do not claim completion without command, critical-path, and review evidence.\n`;
 }
 
 function workflowTemplate(): string {
-  return `# MewoFlow Workflow\n\nnone -> research -> grill -> plan -> implement -> verify -> archive -> done\n`;
+  return `# MewoFlow Workflow\n\nnone -> judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive -> done\n`;
 }
 
 function journalTemplate(): string {
@@ -187,6 +202,10 @@ function grillMeSkillTemplate(): string {
     "Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.",
     "",
     "Ask the questions one at a time.",
+    "",
+    "Cover product goal, MVP scope, non-goals, pages/navigation, data source, core interactions, UI/responsive behavior, empty/error states, testing/acceptance, risks, budget/timebox, infra/deployment, security/privacy, and failure modes/rollback.",
+    "",
+    "Stop only when model/assistant judgment says additional questions are low-value; record that judgment and the low-value follow-ups.",
     "",
     "If a question can be answered by exploring the codebase, explore the codebase instead.",
   ].join("\n") + "\n";

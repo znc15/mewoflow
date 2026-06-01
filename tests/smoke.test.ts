@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
 
 describe("mewoflow cli", () => {
@@ -7,6 +7,9 @@ describe("mewoflow cli", () => {
   });
 
   it("prints version", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(main(["--version"])).resolves.toBe(0);
+    expect(log).toHaveBeenCalledWith("0.2.12");
+    log.mockRestore();
   });
 });
