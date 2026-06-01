@@ -22,6 +22,8 @@ export type HookInput = {
 
 export type PromptClassification = "simple" | TaskType;
 
+export const MEWOFLOW_NOTICE_FIELD = "mewoflowNotice";
+
 export function classifyPrompt(prompt: string): PromptClassification {
   if (isMinorEditPrompt(prompt)) return "simple";
   if (isMetaPrompt(prompt)) return "simple";
@@ -44,6 +46,8 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         `Type: ${activeTask.type}`,
         `Current gate: ${activeTask.gate}`,
         "Continue the current gate. Do not create a new task or skip ahead.",
+        "Required gate order: research -> grill -> plan -> implement -> verify -> archive.",
+        nextActionForGate(activeTask),
       ].join("\n"),
     );
   }
@@ -65,7 +69,8 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
       `Current gate: ${task.gate}`,
       "Normal flow must complete: research -> grill -> plan -> implement -> verify -> archive.",
       "Next action: use Claude Code WebSearch/WebFetch/MCP search or user-provided sources, then write .mewoflow/tasks/<task>/research.md and run `mewoflow check research`.",
-      "Do not grill, plan, edit code, verify, archive, or claim completion before the current gate passes.",
+      "After research passes, complete grill.md and run `mewoflow check grill`; only then write plan.md and run `mewoflow check plan`.",
+      "Do not run package scaffolding, install dependencies, edit code, verify, archive, or claim completion before the required gate passes.",
     ].join("\n"),
   );
 }
@@ -82,14 +87,16 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
   if (!isWriteAttempt(tool, command)) return allowPreToolUse();
 
   const task = await getActiveTask(root, input.session_id ?? "default");
-  if (!task) return allowPreToolUse();
+  if (!task || task.gate === "done") {
+    return hasPackageManagerWriteCommand(command) ? deny(noActiveTaskWriteReason()) : allowPreToolUse();
+  }
 
   if (isActiveTaskEvidenceTarget(target, task) || isActiveTaskEvidenceCommand(command, task)) {
     return allowPreToolUse();
   }
 
   if (task.gate !== "implement") {
-    return deny(`Current MewoFlow gate is ${task.gate}. Editing is blocked until the implement gate.`);
+    return deny(writeBlockedReason(task));
   }
 
   const session = await loadSession(root, input.session_id ?? "default");
@@ -111,7 +118,7 @@ export async function handlePostToolUse(root: string, input: HookInput): Promise
   if (isSearchTool(tool)) await recordSearchTool(root, sessionId, tool);
   if (tool === "Bash" && command) await recordCommand(root, sessionId, command);
 
-  return { hookSpecificOutput: { hookEventName: "PostToolUse" } };
+  return eventOutput("PostToolUse");
 }
 
 export async function handleStop(root: string, input: HookInput): Promise<Record<string, unknown>> {
@@ -119,34 +126,108 @@ export async function handleStop(root: string, input: HookInput): Promise<Record
   if (!taskId) return {};
   const task = await getActiveTask(root, input.session_id ?? "default");
   if (!task || task.gate === "done") return {};
+  const notice = hookNotice("Stop");
   return {
+    [MEWOFLOW_NOTICE_FIELD]: notice,
+    additionalContext: notice,
     decision: "block",
-    reason: `MewoFlow task ${task.id} is not complete. Current gate: ${task.gate}. Continue the required workflow instead of claiming completion.`,
+    reason: `${notice} MewoFlow task ${task.id} is not complete. Current gate: ${task.gate}. Continue the required workflow instead of claiming completion.`,
   };
 }
 
 function promptContext(additionalContext: string): Record<string, unknown> {
+  const notice = hookNotice("UserPromptSubmit");
+  const context = `${notice}\n${additionalContext}`;
   return {
-    additionalContext,
+    [MEWOFLOW_NOTICE_FIELD]: notice,
+    additionalContext: context,
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext,
+      additionalContext: context,
     },
   };
 }
 
 function deny(reason: string): Record<string, unknown> {
+  const notice = hookNotice("PreToolUse");
+  const context = `${notice}\n${reason}`;
   return {
+    [MEWOFLOW_NOTICE_FIELD]: notice,
+    additionalContext: context,
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: reason,
+      permissionDecisionReason: `${notice} ${reason}`,
     },
   };
 }
 
 function allowPreToolUse(): Record<string, unknown> {
-  return { hookSpecificOutput: { hookEventName: "PreToolUse" } };
+  return eventOutput("PreToolUse");
+}
+
+function eventOutput(event: "PreToolUse" | "PostToolUse"): Record<string, unknown> {
+  const notice = hookNotice(event);
+  return {
+    [MEWOFLOW_NOTICE_FIELD]: notice,
+    additionalContext: notice,
+    hookSpecificOutput: { hookEventName: event },
+  };
+}
+
+function hookNotice(event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop"): string {
+  return event === "UserPromptSubmit"
+    ? "猫咪正在监控你的需求喵！"
+    : event === "PreToolUse"
+      ? "猫咪正在检查工具调用喵！"
+      : event === "PostToolUse"
+        ? "猫咪已记录工具结果喵！"
+        : "猫咪发现任务还没完成喵！";
+}
+
+function noActiveTaskWriteReason(): string {
+  return [
+    "No active MewoFlow task. Package scaffolding or dependency changes are blocked until a workflow task is active.",
+    "Start or resume MewoFlow with `/mewoflow`, then follow research -> grill -> plan before running scaffolding or install commands.",
+  ].join(" ");
+}
+
+function writeBlockedReason(task: Task): string {
+  if (task.gate === "research" || task.gate === "grill" || task.gate === "plan") {
+    return [
+      `Current MewoFlow gate is ${task.gate}. Finish research -> grill -> plan before editing or running package scaffolding.`,
+      nextActionForGate(task),
+      "Do not create projects, install dependencies, or edit implementation files until the implement gate.",
+    ].join(" ");
+  }
+
+  return [
+    `Current MewoFlow gate is ${task.gate}. Editing is allowed only during the implement gate.`,
+    nextActionForGate(task),
+  ].join(" ");
+}
+
+function nextActionForGate(task: Task): string {
+  const base = `.mewoflow/tasks/${task.id}`;
+  if (task.gate === "research") {
+    return `Next action: complete ${base}/research.md with search or user-provided-source evidence, then run \`mewoflow check research\`; after that, complete grill before plan or implementation.`;
+  }
+  if (task.gate === "grill") {
+    return `Next action: ask and record critical clarifying questions in ${base}/grill.md, including Recommended Answer, User Answer, Decision, and Acceptance Criteria; then run \`mewoflow check grill\`.`;
+  }
+  if (task.gate === "plan") {
+    return `Next action: write ${base}/plan.md with goal, scope, steps, and verification; then run \`mewoflow check plan\`.`;
+  }
+  if (task.gate === "implement") {
+    return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing.`;
+  }
+  if (task.gate === "verify") {
+    return `Next action: record verification evidence in ${base}/verify.md and run \`mewoflow check verify\`.`;
+  }
+  if (task.gate === "archive") {
+    return `Next action: summarize decisions and verification in ${base}/archive.md and run \`mewoflow check archive\`.`;
+  }
+  return "Next action: start a new MewoFlow task before more implementation work.";
 }
 
 function isReadTool(tool: string): boolean {

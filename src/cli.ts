@@ -13,9 +13,16 @@ import {
   type Gate,
 } from "./task.js";
 import { validateArchive, validateGrill, validatePlan, validateResearch, validateVerify } from "./validators.js";
-import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit, type HookInput } from "./hooks.js";
+import {
+  MEWOFLOW_NOTICE_FIELD,
+  handlePostToolUse,
+  handlePreToolUse,
+  handleStop,
+  handleUserPromptSubmit,
+  type HookInput,
+} from "./hooks.js";
 
-const version = "0.2.4";
+const version = "0.2.6";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;
@@ -137,8 +144,15 @@ async function runHook(root: string, event: string): Promise<number> {
           : event === "stop"
             ? await handleStop(root, input)
             : {};
-  if (Object.keys(output).length > 0) console.log(JSON.stringify(output));
+  const hookOutput = stripMewoFlowNotice(output);
+  if (typeof output[MEWOFLOW_NOTICE_FIELD] === "string") console.error(output[MEWOFLOW_NOTICE_FIELD]);
+  if (Object.keys(hookOutput).length > 0) console.log(JSON.stringify(hookOutput));
   return 0;
+}
+
+function stripMewoFlowNotice(output: Record<string, unknown>): Record<string, unknown> {
+  const { [MEWOFLOW_NOTICE_FIELD]: _notice, ...hookOutput } = output;
+  return hookOutput;
 }
 
 async function readStdinJson(): Promise<unknown> {

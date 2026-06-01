@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { handlePostToolUse, handlePreToolUse, handleStop, handleUserPromptSubmit } from "../src/hooks.js";
+import {
+  MEWOFLOW_NOTICE_FIELD,
+  handlePostToolUse,
+  handlePreToolUse,
+  handleStop,
+  handleUserPromptSubmit,
+} from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
 import { loadSession, loadTask, recordReadFile, sessionFile, taskFile } from "../src/task.js";
 
@@ -11,6 +17,7 @@ describe("hooks", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "把 div 改成红色", session_id: "s1" });
 
+    expect(output[MEWOFLOW_NOTICE_FIELD]).toBe("猫咪正在监控你的需求喵！");
     expect(String(output.additionalContext)).toContain("simple");
     await expect(fs.readdir(path.join(root, ".mewoflow", "tasks"))).rejects.toThrow();
   });
@@ -45,7 +52,10 @@ describe("hooks", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "我想创建一个音乐网页", session_id: "s1" });
 
+    expect(String(output.additionalContext)).toContain("猫咪正在监控你的需求喵！");
     expect(String(output.additionalContext)).toContain("MewoFlow task created");
+    expect(String(output.additionalContext)).toContain("mewoflow check grill");
+    expect(String(output.additionalContext)).toContain("package scaffolding");
 
     const active = await loadSession(root, "s1");
     expect(active.activeTaskId).toBeTruthy();
@@ -77,6 +87,40 @@ describe("hooks", () => {
     expect(session.readFiles).toContain(".mewoflow/rules.md");
   });
 
+  it("adds cat notices to post-tool and stop outputs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+
+    const post = await handlePostToolUse(root, { session_id: "s1", tool_name: "WebSearch", tool_input: {} });
+    expect(post[MEWOFLOW_NOTICE_FIELD]).toBe("猫咪已记录工具结果喵！");
+
+    await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
+    const stop = await handleStop(root, { session_id: "s1" });
+    expect(stop[MEWOFLOW_NOTICE_FIELD]).toBe("猫咪发现任务还没完成喵！");
+    expect(String(stop.reason)).toContain("猫咪发现任务还没完成喵！");
+  });
+
+  it("blocks package scaffolding when no active task exists", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+
+    const blockedCreate = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "pnpm create next-app@latest . --typescript --tailwind 2>&1 | tail -20" },
+    });
+    const blockedText = JSON.stringify(blockedCreate);
+    expect(blockedText).toContain("deny");
+    expect(blockedText).toContain("No active MewoFlow task");
+    expect(blockedText).toContain("research -> grill -> plan");
+    expect(blockedText).toContain("猫咪正在检查工具调用喵！");
+
+    const simpleEdit = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: "src/a.ts" },
+    });
+    expect(JSON.stringify(simpleEdit)).not.toContain("deny");
+  });
+
   it("blocks writes before implement and until required files are read", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
@@ -85,6 +129,8 @@ describe("hooks", () => {
 
     const blockedEarly = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
     expect(JSON.stringify(blockedEarly)).toContain("deny");
+    expect(JSON.stringify(blockedEarly)).toContain("research -> grill -> plan");
+    expect(JSON.stringify(blockedEarly)).toContain("猫咪正在检查工具调用喵！");
 
     task.gate = "implement";
     await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));

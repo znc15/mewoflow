@@ -89,6 +89,10 @@ MewoFlow 会创建任务目录，并要求 AI 按顺序推进：
 research -> grill -> plan -> implement -> verify -> archive
 ```
 
+当 hooks 正常触发时，Claude Code transcript 里会出现类似 `猫咪正在监控你的需求喵！`、`猫咪正在检查工具调用喵！` 的提示。没有看到提示时，先运行 `/mewoflow` 或 `mewoflow doctor` 检查 `.claude/settings.json` 的 hook wiring。
+
+在 `research`、`grill`、`plan` 通过前，MewoFlow 会阻止脚手架、安装依赖和实现文件编辑。比如 `pnpm create next-app@latest .`、`npm install`、`pnpm add` 会被要求先完成 `research -> grill -> plan`，避免 AI 询问完需求后直接创建项目。
+
 常用命令：
 
 ```bash
@@ -148,10 +152,30 @@ Hook 职责：
 
 | Hook | Purpose |
 | --- | --- |
-| `UserPromptSubmit` | 判断请求类型，创建任务，注入当前 gate。 |
-| `PreToolUse` | 阻止过早改代码，保护状态文件，允许写入当前任务证据。 |
-| `PostToolUse` | 记录文件读取、搜索工具调用和命令执行。 |
-| `Stop` | 任务未完成时阻止 AI 直接结束。 |
+| `UserPromptSubmit` | 判断请求类型，创建任务，注入当前 gate，并输出猫咪监控提示。 |
+| `PreToolUse` | 阻止过早改代码、脚手架和安装依赖，保护状态文件，允许写入当前任务证据。 |
+| `PostToolUse` | 记录文件读取、搜索工具调用和命令执行，并输出记录提示。 |
+| `Stop` | 任务未完成时阻止 AI 直接结束，并提醒继续当前 gate。 |
+
+如果当前没有 active task，`PreToolUse` 也会阻止高风险脚手架或依赖命令，提示先用 `/mewoflow` 建立或恢复任务。普通小改动不会因此被强制拉入完整 workflow。
+
+## Troubleshooting
+
+### 看不到猫咪 hook 提示
+
+1. 在 Claude Code 里运行 `/mewoflow`，让 skill 检查或重建本地 wiring。
+2. 运行 `mewoflow doctor`，确认 `.claude/settings.json` 包含 `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 四个 hook。
+3. 如果 doctor 报 hook 缺失，重新执行 `npx mewoflow init`。
+
+### Claude 询问后仍想直接创建项目
+
+这通常表示 active task 没有建立，或当前 gate 还停在 `research` / `grill` / `plan`。MewoFlow 会在工具调用前拦截脚手架和依赖命令，并提示先完成：
+
+```txt
+research -> grill -> plan
+```
+
+继续方式是先补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`，分别运行 `mewoflow check research`、`mewoflow check grill`、`mewoflow check plan`，进入 `implement` 后再创建项目或改代码。
 
 ## Workflow Gates
 
