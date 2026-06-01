@@ -46,6 +46,7 @@ const requiredFiles = [
   ".claude/settings.json",
   ".claude/skills/mewoflow/SKILL.md",
   ".claude/skills/mewoflow-doctor/SKILL.md",
+  ".claude/skills/grill-me/SKILL.md",
 ];
 
 const expectedHooks = {
@@ -121,6 +122,11 @@ async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
       file: path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"),
       snippets: ["WebSearch", "npx mewoflow doctor --require-search"],
     },
+    {
+      name: "grill-me",
+      file: path.join(root, ".claude", "skills", "grill-me", "SKILL.md"),
+      snippets: ["Interview me relentlessly", "Ask the questions one at a time"],
+    },
   ];
 
   const missing: string[] = [];
@@ -146,7 +152,7 @@ async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
     return fail("Claude Code skills", `Outdated or custom skill file(s): ${stale.join(", ")}. Re-run ` + "`mewoflow init` or update them manually.");
   }
 
-  return pass("Claude Code skills", "Generated /mewoflow and /mewoflow-doctor skills look healthy.");
+  return pass("Claude Code skills", "Generated /mewoflow, /mewoflow-doctor, and grill-me skills look healthy.");
 }
 
 async function checkClaudeMemoryImport(root: string): Promise<DoctorCheck> {

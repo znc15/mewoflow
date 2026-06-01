@@ -54,6 +54,8 @@ describe("hooks", () => {
 
     expect(String(output.additionalContext)).toContain("猫咪正在监控你的需求喵！");
     expect(String(output.additionalContext)).toContain("MewoFlow task created");
+    expect(String(output.additionalContext)).toContain("Mandatory visible response");
+    expect(String(output.additionalContext)).toContain("grill-me");
     expect(String(output.additionalContext)).toContain("mewoflow check grill");
     expect(String(output.additionalContext)).toContain("package scaffolding");
 
@@ -69,6 +71,8 @@ describe("hooks", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const standard = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
     expect(String(standard.additionalContext)).toContain("Current gate: research");
+    expect(String(standard.additionalContext)).toContain("Mandatory visible response");
+    expect(String(standard.additionalContext)).toContain("grill-me");
 
     const active = await loadSession(root, "s1");
     expect(active.activeTaskId).toBeTruthy();

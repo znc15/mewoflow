@@ -17,9 +17,34 @@ export function validateResearch(text: string, session: SessionState): Validatio
 }
 
 export function validateGrill(text: string): ValidationResult {
-  return toResult(
-    requireIncludes(text, ["Recommended Answer:", "User Answer:", "## Locked Decisions", "## Acceptance Criteria"]),
-  );
+  const errors = requireIncludes(text, [
+    "## Grill Skill",
+    "grill-me",
+    "## Question Log",
+    "Question:",
+    "Recommended Answer:",
+    "User Answer:",
+    "Decision:",
+    "## Locked Decisions",
+    "## Acceptance Criteria",
+    "## Grill Completion Judgment",
+    "Status:",
+    "Reason:",
+  ]);
+
+  if (!/## Grill Skill[\s\S]*?Used:\s*grill-me/i.test(text)) {
+    errors.push("Grill must record direct use of the project-local grill-me skill.");
+  }
+
+  if (!/Status:\s*\S+/i.test(text)) {
+    errors.push("Grill completion judgment requires a non-empty Status.");
+  }
+
+  if (!/Reason:\s*\S+/i.test(text)) {
+    errors.push("Grill completion judgment requires a reason explaining why no meaningful questions remain.");
+  }
+
+  return toResult(errors);
 }
 
 export function validatePlan(text: string): ValidationResult {

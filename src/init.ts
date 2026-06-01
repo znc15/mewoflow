@@ -29,6 +29,7 @@ export async function initProject(root = process.cwd()): Promise<void> {
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), hookShimTemplate());
   await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), entrySkillTemplate());
   await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"), doctorSkillTemplate());
+  await writeFileIfMissing(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"), grillMeSkillTemplate());
   await writeMergedClaudeSettings(path.join(root, ".claude", "settings.json"));
 }
 
@@ -112,7 +113,8 @@ function agentsTemplate(): string {
     "Rules:",
     "",
     "- Use current sources before planning or implementing.",
-    "- Ask and record clarifying questions before locking the plan.",
+    "- During the `grill` gate, use the project-local `grill-me` skill directly; do not merely imitate it.",
+    "- Ask and record clarifying questions before locking the plan, and record why no meaningful questions remain before leaving `grill`.",
     "- Do not edit implementation files before the active task reaches the `implement` gate.",
     "- Do not claim completion without verification evidence.",
     "- Use `mewoflow status` to inspect the active task.",
@@ -137,6 +139,7 @@ function claudeTemplate(): string {
     "- Use `/mewoflow` to initialize or resume the local MewoFlow workflow entry point.",
     "- Use `/mewoflow-doctor` when asked to verify whether MewoFlow is working.",
     "- Research must use Claude Code WebSearch, WebFetch, MCP search, or explicit user-provided sources before `mewoflow check research`.",
+    "- Grill must directly use the project-local `grill-me` skill from `.claude/skills/grill-me/SKILL.md` before `mewoflow check grill`.",
     "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
     "- Let hooks block incomplete work instead of bypassing the workflow.",
   ].join("\n") + "\n";
@@ -171,7 +174,22 @@ function hookShimTemplate(): string {
 }
 
 function entrySkillTemplate(): string {
-  return `---\ndescription: Bootstrap or resume MewoFlow in Claude Code. Use when the user invokes /mewoflow to initialize wiring, verify hooks, and get back to a ready workflow state.\ndisable-model-invocation: true\n---\n\n# MewoFlow\n\nRun this skill when the user invokes \`/mewoflow\` or asks to start or continue MewoFlow in the current project.\n\n## Required flow\n\n1. Check whether \`.mewoflow/rules.md\`, \`.claude/settings.json\`, and \`.claude/skills/mewoflow-doctor/SKILL.md\` already exist.\n2. If MewoFlow files or hook wiring are missing, run:\n\n\`\`\`bash\nnpx mewoflow init\n\`\`\`\n\n3. Run:\n\n\`\`\`bash\nnpx mewoflow doctor\n\`\`\`\n\n4. If doctor reports a failure, explain the smallest next fix and stop.\n5. If there is an active task, report the current gate and continue that workflow instead of starting unrelated implementation.\n6. If there is no active task, tell the user MewoFlow is ready and ask for the concrete development request. Do not start implementing until the user gives a real task.\n`;
+  return `---\ndescription: Bootstrap or resume MewoFlow in Claude Code. Use when the user invokes /mewoflow to initialize wiring, verify hooks, and get back to a ready workflow state.\ndisable-model-invocation: true\n---\n\n# MewoFlow\n\nRun this skill when the user invokes \`/mewoflow\` or asks to start or continue MewoFlow in the current project.\n\n## Required flow\n\n1. Check whether \`.mewoflow/rules.md\`, \`.claude/settings.json\`, \`.claude/skills/mewoflow-doctor/SKILL.md\`, and \`.claude/skills/grill-me/SKILL.md\` already exist.\n2. If MewoFlow files, grill-me skill, or hook wiring are missing, run:\n\n\`\`\`bash\nnpx mewoflow init\n\`\`\`\n\n3. Run:\n\n\`\`\`bash\nnpx mewoflow doctor\n\`\`\`\n\n4. If doctor reports a failure, explain the smallest next fix and stop.\n5. If there is an active task, visibly report the task id and current gate, then continue that workflow instead of starting unrelated implementation.\n6. If the active gate is \`grill\`, use the project-local \`grill-me\` skill directly before writing or checking \`grill.md\`.\n7. If there is no active task, tell the user MewoFlow is ready and ask for the concrete development request. Do not start implementing until the user gives a real task.\n`;
+}
+
+function grillMeSkillTemplate(): string {
+  return [
+    "---",
+    "name: grill-me",
+    "description: Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions \"grill me\".",
+    "---",
+    "",
+    "Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.",
+    "",
+    "Ask the questions one at a time.",
+    "",
+    "If a question can be answered by exploring the codebase, explore the codebase instead.",
+  ].join("\n") + "\n";
 }
 
 function doctorSkillTemplate(): string {

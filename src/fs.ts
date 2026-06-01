@@ -26,6 +26,7 @@ export async function readJson<T>(file: string): Promise<T> {
 export async function writeJson(file: string, value: unknown): Promise<void> {
   const tempFile = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
+    await ensureDir(path.dirname(file));
     await writeFileEnsured(tempFile, `${JSON.stringify(value, null, 2)}\n`);
     await fs.rename(tempFile, file);
   } finally {

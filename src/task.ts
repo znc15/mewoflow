@@ -292,7 +292,7 @@ function researchTemplate(): string {
 }
 
 function grillTemplate(): string {
-  return `# Grill\n\n## Q1\nQuestion:\nRecommended Answer:\nUser Answer:\nDecision:\n\n## Locked Decisions\n\n## Acceptance Criteria\n\n## Open Questions\n- None\n`;
+  return `# Grill\n\n## Grill Skill\n- Used: grill-me\n- Source: .claude/skills/grill-me/SKILL.md\n\n## Question Log\n\n### Q1\nQuestion:\nRecommended Answer:\nUser Answer:\nDecision:\n\n## Locked Decisions\n\n## Acceptance Criteria\n\n## Grill Completion Judgment\nStatus:\nReason:\n\n## Open Questions\n- None\n`;
 }
 
 function planTemplate(): string {

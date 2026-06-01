@@ -45,6 +45,7 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         `MewoFlow active task: ${activeTask.id}`,
         `Type: ${activeTask.type}`,
         `Current gate: ${activeTask.gate}`,
+        visibleTaskNotice(`MewoFlow active task: ${activeTask.id}`, activeTask.gate),
         "Continue the current gate. Do not create a new task or skip ahead.",
         "Required gate order: research -> grill -> plan -> implement -> verify -> archive.",
         nextActionForGate(activeTask),
@@ -67,9 +68,10 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
       `MewoFlow task created: ${task.id}`,
       `Type: ${task.type}`,
       `Current gate: ${task.gate}`,
+      visibleTaskNotice(`MewoFlow task created: ${task.id}`, task.gate),
       "Normal flow must complete: research -> grill -> plan -> implement -> verify -> archive.",
       "Next action: use Claude Code WebSearch/WebFetch/MCP search or user-provided sources, then write .mewoflow/tasks/<task>/research.md and run `mewoflow check research`.",
-      "After research passes, complete grill.md and run `mewoflow check grill`; only then write plan.md and run `mewoflow check plan`.",
+      "After research passes, directly use the project-local `grill-me` skill from `.claude/skills/grill-me/SKILL.md`, then complete grill.md and run `mewoflow check grill`; only then write plan.md and run `mewoflow check plan`.",
       "Do not run package scaffolding, install dependencies, edit code, verify, archive, or claim completion before the required gate passes.",
     ].join("\n"),
   );
@@ -113,12 +115,13 @@ export async function handlePostToolUse(root: string, input: HookInput): Promise
   const tool = input.tool_name ?? "";
   const target = String(input.tool_input?.file_path ?? input.tool_input?.path ?? "");
   const command = String(input.tool_input?.command ?? "");
+  const warnings: string[] = [];
 
-  if (isReadTool(tool) && target) await recordReadFile(root, sessionId, target);
-  if (isSearchTool(tool)) await recordSearchTool(root, sessionId, tool);
-  if (tool === "Bash" && command) await recordCommand(root, sessionId, command);
+  if (isReadTool(tool) && target) await recordHookEvidence(warnings, "read file", () => recordReadFile(root, sessionId, target));
+  if (isSearchTool(tool)) await recordHookEvidence(warnings, "search tool", () => recordSearchTool(root, sessionId, tool));
+  if (tool === "Bash" && command) await recordHookEvidence(warnings, "bash command", () => recordCommand(root, sessionId, command));
 
-  return eventOutput("PostToolUse");
+  return eventOutput("PostToolUse", warnings.length > 0 ? `MewoFlow warning: ${warnings.join("; ")}` : undefined);
 }
 
 export async function handleStop(root: string, input: HookInput): Promise<Record<string, unknown>> {
@@ -166,13 +169,31 @@ function allowPreToolUse(): Record<string, unknown> {
   return eventOutput("PreToolUse");
 }
 
-function eventOutput(event: "PreToolUse" | "PostToolUse"): Record<string, unknown> {
+function eventOutput(event: "PreToolUse" | "PostToolUse", detail?: string): Record<string, unknown> {
   const notice = hookNotice(event);
+  const additionalContext = detail ? `${notice}\n${detail}` : notice;
   return {
     [MEWOFLOW_NOTICE_FIELD]: notice,
-    additionalContext: notice,
+    additionalContext,
     hookSpecificOutput: { hookEventName: event },
   };
+}
+
+async function recordHookEvidence(warnings: string[], label: string, action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(`could not record ${label}: ${message}`);
+  }
+}
+
+function visibleTaskNotice(taskLine: string, gate: string): string {
+  return [
+    "Mandatory visible response: In your next assistant message, tell the user this MewoFlow hook fired.",
+    `Start with: \"${hookNotice("UserPromptSubmit")} ${taskLine}. Current gate: ${gate}.\"`,
+    "Do not hide the cat notice or task id in internal reasoning only.",
+  ].join(" ");
 }
 
 function hookNotice(event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop"): string {
@@ -210,10 +231,10 @@ function writeBlockedReason(task: Task): string {
 function nextActionForGate(task: Task): string {
   const base = `.mewoflow/tasks/${task.id}`;
   if (task.gate === "research") {
-    return `Next action: complete ${base}/research.md with search or user-provided-source evidence, then run \`mewoflow check research\`; after that, complete grill before plan or implementation.`;
+    return `Next action: complete ${base}/research.md with search or user-provided-source evidence, then run \`mewoflow check research\`; after that, directly use the project-local grill-me skill before plan or implementation.`;
   }
   if (task.gate === "grill") {
-    return `Next action: ask and record critical clarifying questions in ${base}/grill.md, including Recommended Answer, User Answer, Decision, and Acceptance Criteria; then run \`mewoflow check grill\`.`;
+    return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time, record Recommended Answer, User Answer, Decision, and why no meaningful questions remain in ${base}/grill.md; then run \`mewoflow check grill\`.`;
   }
   if (task.gate === "plan") {
     return `Next action: write ${base}/plan.md with goal, scope, steps, and verification; then run \`mewoflow check plan\`.`;

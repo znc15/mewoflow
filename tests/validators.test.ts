@@ -58,10 +58,31 @@ describe("validators", () => {
   it("validates grill and plan documents", () => {
     expect(
       validateGrill(`# Grill
-Recommended Answer:
-User Answer:
+
+## Grill Skill
+- Used: grill-me
+- Source: .claude/skills/grill-me/SKILL.md
+
+## Question Log
+
+### Q1
+Question: Should the fix include regression verification?
+Recommended Answer: Yes.
+User Answer: Yes.
+Decision: Include verification evidence.
+
 ## Locked Decisions
+- Fix must include proof.
+
 ## Acceptance Criteria
+- Login works.
+
+## Grill Completion Judgment
+Status: no-meaningful-questions-left
+Reason: Remaining choices are implementation details and do not change the plan.
+
+## Open Questions
+- None
 `).ok,
     ).toBe(true);
 
@@ -74,6 +95,52 @@ User Answer:
 ## Verification
 `).ok,
     ).toBe(true);
+  });
+
+  it("requires grill-me skill usage and completion judgment", () => {
+    expect(
+      validateGrill(`# Grill
+
+## Grill Skill
+- Used: other-skill
+
+## Question Log
+Question: Q?
+Recommended Answer: A.
+User Answer: A.
+Decision: D.
+
+## Locked Decisions
+
+## Acceptance Criteria
+
+## Grill Completion Judgment
+Status: no-meaningful-questions-left
+Reason: Done.
+`).ok,
+    ).toBe(false);
+
+    expect(
+      validateGrill(`# Grill
+
+## Grill Skill
+- Used: grill-me
+
+## Question Log
+Question: Q?
+Recommended Answer: A.
+User Answer: A.
+Decision: D.
+
+## Locked Decisions
+
+## Acceptance Criteria
+
+## Grill Completion Judgment
+Status: no-meaningful-questions-left
+Reason:
+`).ok,
+    ).toBe(false);
   });
 
   it("validates verify and archive documents", () => {

@@ -89,6 +89,8 @@ MewoFlow 会创建任务目录，并要求 AI 按顺序推进：
 research -> grill -> plan -> implement -> verify -> archive
 ```
 
+其中 `grill` gate 会直接使用初始化时写入项目的 `.claude/skills/grill-me/SKILL.md`，要求 AI 一次只问一个关键问题，给出推荐答案，直到它判断继续追问已经没有意义，再把结论和停止追问的理由写入 `grill.md`。
+
 当 hooks 正常触发时，Claude Code transcript 里会出现类似 `猫咪正在监控你的需求喵！`、`猫咪正在检查工具调用喵！` 的提示。没有看到提示时，先运行 `/mewoflow` 或 `mewoflow doctor` 检查 `.claude/settings.json` 的 hook wiring。
 
 在 `research`、`grill`、`plan` 通过前，MewoFlow 会阻止脚手架、安装依赖和实现文件编辑。比如 `pnpm create next-app@latest .`、`npm install`、`pnpm add` 会被要求先完成 `research -> grill -> plan`，避免 AI 询问完需求后直接创建项目。
@@ -146,6 +148,8 @@ CLAUDE.md
       SKILL.md
     mewoflow-doctor/
       SKILL.md
+    grill-me/
+      SKILL.md
 ```
 
 Hook 职责：
@@ -177,12 +181,22 @@ research -> grill -> plan
 
 继续方式是先补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`，分别运行 `mewoflow check research`、`mewoflow check grill`、`mewoflow check plan`，进入 `implement` 后再创建项目或改代码。
 
+### `grill-me` 缺失或 grill 只问一轮
+
+`grill` 不是固定轮数限制，而是必须使用项目内置的 `.claude/skills/grill-me/SKILL.md`，持续追问到模型判断“继续问已经没有意义”。如果 `mewoflow doctor` 报 `.claude/skills/grill-me/SKILL.md` 缺失，或 `grill.md` 没有记录 `Used: grill-me` 与 `Grill Completion Judgment`，重新执行：
+
+```bash
+npx mewoflow init
+```
+
+然后让 Claude Code 回到当前任务的 `grill` gate，直接使用 project-local `grill-me` skill。
+
 ## Workflow Gates
 
 | Gate | Purpose | Evidence |
 | --- | --- | --- |
 | `research` | 获取最新资料和上下文 | 来源、事实、对任务的影响 |
-| `grill` | 追问关键需求 | 问题、推荐答案、用户答案、决策、验收标准 |
+| `grill` | 直接使用 project-local `grill-me` 追问关键需求 | skill 使用记录、问题、推荐答案、用户答案、决策、验收标准、停止追问理由 |
 | `plan` | 写实现计划 | 目标、范围、非目标、步骤、验证方式 |
 | `implement` | 允许修改代码 | 已读取规则和任务上下文 |
 | `verify` | 用证据证明结果 | 命令输出、关键链路证据、review 记录 |
@@ -220,9 +234,10 @@ mewoflow doctor --require-search
 ```txt
 /mewoflow
 /mewoflow-doctor
+grill-me
 ```
 
-`/mewoflow` 用来开始或恢复 MewoFlow，`/mewoflow-doctor` 会要求 Claude Code 先使用自带搜索，再运行 `npx mewoflow doctor --require-search`。
+`/mewoflow` 用来开始或恢复 MewoFlow，`/mewoflow-doctor` 会要求 Claude Code 先使用自带搜索，再运行 `npx mewoflow doctor --require-search`。`grill-me` 是 project-local skill，供 `grill` gate 直接调用。
 
 ## AGENTS.md and CLAUDE.md
 

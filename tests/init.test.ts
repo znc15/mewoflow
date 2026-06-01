@@ -24,9 +24,11 @@ describe("initProject", () => {
     await expect(fs.stat(path.join(root, ".claude", "settings.json"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"))).resolves.toBeTruthy();
 
     await expect(fs.readFile(path.join(root, "CLAUDE.md"), "utf8")).resolves.toContain("@AGENTS.md");
     await expect(fs.readFile(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), "utf8")).resolves.toContain("npx mewoflow doctor");
+    await expect(fs.readFile(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"), "utf8")).resolves.toContain("Interview me relentlessly");
   });
 
   it("preserves user-edited rules and workflow files", async () => {
@@ -50,6 +52,7 @@ describe("initProject", () => {
     const codingSpecFile = path.join(root, ".mewoflow", "specs", "coding.md");
     const entrySkillFile = path.join(root, ".claude", "skills", "mewoflow", "SKILL.md");
     const doctorSkillFile = path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md");
+    const grillMeSkillFile = path.join(root, ".claude", "skills", "grill-me", "SKILL.md");
     const agentsFile = path.join(root, "AGENTS.md");
     const claudeFile = path.join(root, "CLAUDE.md");
 
@@ -58,6 +61,7 @@ describe("initProject", () => {
     await fs.writeFile(codingSpecFile, "custom coding spec\n", "utf8");
     await fs.writeFile(entrySkillFile, "custom entry skill\n", "utf8");
     await fs.writeFile(doctorSkillFile, "custom doctor skill\n", "utf8");
+    await fs.writeFile(grillMeSkillFile, "custom grill-me skill\n", "utf8");
     await fs.writeFile(agentsFile, "custom agents\n", "utf8");
     await fs.writeFile(claudeFile, "custom claude\n", "utf8");
 
@@ -67,6 +71,7 @@ describe("initProject", () => {
     await expect(fs.readFile(codingSpecFile, "utf8")).resolves.toBe("custom coding spec\n");
     await expect(fs.readFile(entrySkillFile, "utf8")).resolves.toBe("custom entry skill\n");
     await expect(fs.readFile(doctorSkillFile, "utf8")).resolves.toBe("custom doctor skill\n");
+    await expect(fs.readFile(grillMeSkillFile, "utf8")).resolves.toBe("custom grill-me skill\n");
     await expect(fs.readFile(agentsFile, "utf8")).resolves.toBe("custom agents\n");
     await expect(fs.readFile(claudeFile, "utf8")).resolves.toBe("custom claude\n");
   });

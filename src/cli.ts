@@ -22,7 +22,7 @@ import {
   type HookInput,
 } from "./hooks.js";
 
-const version = "0.2.6";
+const version = "0.2.7";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;

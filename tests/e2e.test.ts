@@ -48,7 +48,13 @@ describe("MewoFlow local workflow", () => {
       taskFile(root, taskId, "grill.md"),
       `# Grill
 
-## Q1
+## Grill Skill
+- Used: grill-me
+- Source: .claude/skills/grill-me/SKILL.md
+
+## Question Log
+
+### Q1
 Question: Should the fix include regression verification?
 Recommended Answer: Yes.
 User Answer: Yes.
@@ -59,6 +65,10 @@ Decision: Include verification evidence.
 
 ## Acceptance Criteria
 - Login works.
+
+## Grill Completion Judgment
+Status: no-meaningful-questions-left
+Reason: Remaining choices are implementation details and do not change the plan.
 
 ## Open Questions
 - None
