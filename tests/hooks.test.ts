@@ -151,6 +151,27 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
   });
 
+  it("accepts bare judgment approval and bare task confirmation replies", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await handleUserPromptSubmit(root, { prompt: "我想创建一个网页播放器，使用网易云的音乐", session_id: "s1" });
+
+    const accepted = await handleUserPromptSubmit(root, { prompt: "正确", session_id: "s1" });
+    expect(String(accepted.additionalContext)).toContain("MewoFlow pending task proposed after judgment confirmation");
+
+    let session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeUndefined();
+    expect(session.pendingTask).toBeTruthy();
+
+    await proposePendingTask(root, { title: "网易云网页音乐播放器", slug: "netease-web-music-player", sessionId: "s1" });
+
+    const confirmed = await handleUserPromptSubmit(root, { prompt: "确认", session_id: "s1" });
+    expect(String(confirmed.additionalContext)).toContain("MewoFlow task created after user confirmation");
+
+    session = await loadSession(root, "s1");
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeTruthy();
+  });
+
   it("creates an active workflow only after user confirmation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const proposed = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });

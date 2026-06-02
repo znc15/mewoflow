@@ -653,6 +653,8 @@ function isMetaPrompt(prompt: string): boolean {
 }
 
 function isTaskConfirmationPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  if (/^(确认|同意|可以|是|是的|创建|yes|ok)$/i.test(trimmed)) return true;
   return /确认创建|同意创建|创建任务|开始\s*MewoFlow\s*任务|开始任务|批准创建|yes|ok/i.test(prompt);
 }
 
@@ -661,6 +663,8 @@ function isTaskRejectionPrompt(prompt: string): boolean {
 }
 
 function isJudgmentApprovalPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  if (/^(正确|對|对|对的|對的|是|是的|没错|沒錯|没问题|沒有问题|无问题|無問題|可以|可以继续|继续|同意|同意这个判断|yes|ok)$/i.test(trimmed)) return true;
   return /判断.{0,8}(正确|没问题|沒有问题|无问题|無問題|对|對)|没问题|沒有问题|无问题|無問題|判断可以|判断通过|判断没错|对的|可以继续|继续|同意这个判断|yes|ok/i.test(prompt);
 }
 
