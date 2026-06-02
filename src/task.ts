@@ -319,6 +319,44 @@ export async function clearPendingTask(root: string, sessionId = "default"): Pro
   }
 }
 
+export async function acceptPendingJudgment(root: string, sessionId = "default"): Promise<{ judgment: PendingJudgment; pendingTask?: PendingTask } | null> {
+  const session = await loadSession(root, sessionId);
+  const defaultJudgment = sessionId !== "default" && !session.pendingJudgment ? (await loadSession(root, "default")).pendingJudgment : undefined;
+  const judgment = session.pendingJudgment ?? defaultJudgment;
+  if (!judgment) return null;
+
+  if (judgment.classification === "simple") {
+    await clearPendingJudgment(root, sessionId);
+    return { judgment };
+  }
+
+  const pendingTask = await createPendingTask(root, {
+    title: judgment.prompt,
+    type: judgment.classification,
+    prompt: judgment.prompt,
+  });
+  await setPendingTask(root, pendingTask, sessionId);
+  return { judgment, pendingTask };
+}
+
+export async function rejectPendingJudgment(root: string, sessionId = "default"): Promise<PendingJudgment | null> {
+  const session = await loadSession(root, sessionId);
+  const defaultJudgment = sessionId !== "default" && !session.pendingJudgment ? (await loadSession(root, "default")).pendingJudgment : undefined;
+  const judgment = session.pendingJudgment ?? defaultJudgment;
+  if (!judgment) return null;
+
+  await clearPendingJudgment(root, sessionId);
+  return judgment;
+}
+
+export async function cancelPendingTask(root: string, sessionId = "default"): Promise<PendingTask | null> {
+  const pendingTask = await findPendingTask(root, sessionId);
+  if (!pendingTask) return null;
+
+  await clearPendingTask(root, sessionId);
+  return pendingTask;
+}
+
 export async function confirmPendingTask(root: string, sessionId = "default"): Promise<Task | null> {
   const pendingTask = await findPendingTask(root, sessionId);
   if (!pendingTask) return null;

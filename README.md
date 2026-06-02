@@ -36,18 +36,30 @@ mewoflow init
 修复登录 bug
 ```
 
-MewoFlow 不会立刻创建任务目录。它会先提出一个 draft pending task。Claude 必须先用受控命令提交自己判断出的 title/slug：
+MewoFlow 不会立刻创建任务目录。它会先把请求判断为 `simple` / `standard` / `epic`，把判断结果展示给你，并询问这个判断有没有问题。hook 不会根据固定回复词自动接受或拒绝判断；Claude 需要理解你的自然语言回复，然后运行显式状态转换命令：
 
 ```bash
-npx mewoflow propose-task --title "修复登录 bug" --slug "login-bug"
+npx mewoflow accept-judgment --session <session-id>
+npx mewoflow reject-judgment --reason "用户纠正内容" --session <session-id>
 ```
 
-然后再明确询问你是否创建任务。你确认后，例如回复 `确认创建任务`，才会通过 `npx mewoflow confirm-task` 或 `npx mewoflow check pending-task-confirmation` 创建 `.mewoflow/tasks/<date>-<slug>/` 并进入正式 workflow。draft id 不会作为最终 task id。
+如果 workflow 判断被接受，`accept-judgment` 才会创建 draft pending task。随后 Claude 必须用受控命令提交自己判断出的最终 title/slug：
 
-如果 Claude Code 用结构化问答收集了你的确认，可能不会触发新的 `UserPromptSubmit` hook。这种情况下 Claude 应先确保已运行 `npx mewoflow propose-task --title "..." --slug "..."`，再运行 `npx mewoflow confirm-task` 或 `npx mewoflow check pending-task-confirmation` 来创建任务；不允许手动 `mkdir .mewoflow/tasks/...` 或写任务状态文件。
+```bash
+npx mewoflow propose-task --title "修复登录 bug" --slug "login-bug" --session <session-id>
+```
+
+然后再明确询问你是否创建任务。Claude 理解你的确认或取消后，必须运行显式命令，不允许 hook 用硬编码短语自动判断：
+
+```bash
+npx mewoflow confirm-task --session <session-id>
+npx mewoflow cancel-task --session <session-id>
+```
+
+`confirm-task` 会创建 `.mewoflow/tasks/<date>-<slug>/` 并进入正式 workflow。draft id 不会作为最终 task id。如果 Claude Code 用结构化问答收集了确认，可能不会触发新的 `UserPromptSubmit` hook；这种情况下同样运行上面的受控命令，不允许手动 `mkdir .mewoflow/tasks/...` 或写任务状态文件。
 
 ```txt
-pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive
+judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive
 ```
 
 其中 `research.md` 必须写 `## Tool Evidence`，并证明用过 WebSearch、WebFetch、MCP、skill 或明确用户来源；不能把用户拒绝回答的问题或假设写成事实。
@@ -56,11 +68,13 @@ pending-task-confirmation -> research -> grill -> plan -> user-approval -> imple
 
 `plan` gate 也不会自动进入实现。Claude 在最终写计划前必须再次联网/MCP/skill 搜索快捷方案或现成方案，并在 `## Shortcut / Existing Solution Scan` 中记录。计划还必须包含 MVP 切片、阶段、延后项、风险和验证方式。从 0 开始的大项目应先作为 parent epic 完成全局 research/grill/plan，再在 `## Parent / Child Task Breakdown` 里列出 child tasks，计划批准后可用 `mewoflow split-task --from-plan` 拆分逐一完成。
 
-Claude 必须先把计划展示给你，等你明确回复 `同意计划`、`确认执行` 或 `开始实现` 之类的批准后，`mewoflow check plan` 才能进入 `implement`。如果批准来自结构化问答，Claude 应运行：
+Claude 必须先把计划展示给你。hook 不会根据固定批准短语自动记录 plan approval；Claude 理解你的自然语言回复已经批准计划后，应运行：
 
 ```bash
-npx mewoflow approve-plan --prompt "用户批准计划"
+npx mewoflow approve-plan --prompt "用户批准计划原文" --session <session-id>
 ```
+
+只有记录了这条显式批准后，`mewoflow check plan` 才能进入 `implement`。
 
 实现完成后不能只跑一次验证就结束。标准流程必须先把初次验证证据写入 `verify.md`，通过 `mewoflow check verify` 进入 `review`；随后在 `review.md` 中记录逐文件代码 review、架构/安全/性能/可维护性影响，并在适合时使用 skill 或 subagent；`mewoflow check review` 通过后必须再次补充 post-review 验证证据，再通过第二次 `mewoflow check verify` 进入 `archive`。归档通过后，任务目录会移动到 `.mewoflow/archive/<task-id>/`。
 
@@ -80,13 +94,16 @@ npx mewoflow commit --message "简短提交说明"
 
 ```bash
 mewoflow status
-mewoflow propose-task --title "修复登录 bug" --slug "login-bug"
-mewoflow confirm-task
+mewoflow accept-judgment --session <session-id>
+mewoflow reject-judgment --reason "用户纠正内容" --session <session-id>
+mewoflow propose-task --title "修复登录 bug" --slug "login-bug" --session <session-id>
+mewoflow confirm-task --session <session-id>
+mewoflow cancel-task --session <session-id>
 mewoflow check pending-task-confirmation
 mewoflow check research
 mewoflow check grill
 mewoflow check plan
-mewoflow approve-plan --prompt "用户批准计划"
+mewoflow approve-plan --prompt "用户批准计划原文" --session <session-id>
 mewoflow split-task --from-plan
 mewoflow check implement
 mewoflow check verify
@@ -156,13 +173,13 @@ Hook 职责：
 
 | Hook               | Purpose                                                |
 | ------------------ | ------------------------------------------------------ |
-| `UserPromptSubmit` | 判断请求类型，先提出 pending task，用户确认后创建任务，注入当前 gate，并输出猫咪监控提示。 |
-| `PreToolUse`       | 阻止 pending task 未确认、过早改代码、脚手架和安装依赖；保护状态文件，允许写入当前任务证据。  |
+| `UserPromptSubmit` | 判断请求类型，先创建 pending judgment，并提示 Claude 通过显式 CLI 命令推进判断、任务确认和计划批准。 |
+| `PreToolUse`       | 阻止 pending judgment/task 未确认、过早改代码、脚手架和安装依赖；保护状态文件，允许受控 CLI 命令和当前任务证据写入。  |
 | `PostToolUse`      | 记录文件读取、搜索工具调用和命令执行，并输出记录提示。                            |
 | `Stop`             | 任务未完成时阻止 AI 直接结束，并提醒继续当前 gate。                         |
 
 
-如果当前只有 pending task，`PreToolUse` 会阻止研究、脚手架和文件写入，直到你明确确认创建任务。唯一允许的 pending 写入口是 MewoFlow CLI 自己的受控命令：`mewoflow propose-task --title "..." --slug "..."` 记录模型建议，随后 `mewoflow confirm-task` / `mewoflow check pending-task-confirmation` 创建正式任务。如果当前没有 active task，`PreToolUse` 也会阻止高风险脚手架或依赖命令，提示先用 `/mewoflow` 建立或恢复任务。普通小改动不会因此被强制拉入完整 workflow。
+如果当前只有 pending judgment，`PreToolUse` 会阻止研究、脚手架和文件写入，只允许 `mewoflow accept-judgment` / `mewoflow reject-judgment --reason "..."` 这类受控判断命令。判断被接受后才会出现 pending task；此时唯一允许的 pending 写入口是 MewoFlow CLI 自己的受控命令：`mewoflow propose-task --title "..." --slug "..."` 记录模型建议，随后由 `mewoflow confirm-task` 创建正式任务，或由 `mewoflow cancel-task` 取消草稿。hook 不会根据自然语言短句自动确认或取消。如果当前没有 active task，`PreToolUse` 也会阻止高风险脚手架或依赖命令，提示先建立或恢复任务。普通小改动不会因此被强制拉入完整 workflow。
 
 ## Troubleshooting
 
@@ -174,27 +191,27 @@ Hook 职责：
 
 ### Claude 询问后仍想直接创建项目
 
-这通常表示 pending task 还没有被你确认、active task 没有建立，或当前 gate 还停在 `research` / `grill` / `plan`。MewoFlow 会在工具调用前拦截脚手架和依赖命令，并提示先完成：
+这通常表示 prompt judgment 还没通过显式命令处理、pending task 还没有被确认、active task 没有建立，或当前 gate 还停在 `research` / `grill` / `plan`。MewoFlow 会在工具调用前拦截脚手架和依赖命令，并提示先完成：
 
 ```txt
-pending-task-confirmation -> research -> grill -> plan -> user-approval
+judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval
 ```
 
-继续方式是：先运行 `mewoflow propose-task --title "..." --slug "..."` 固化模型建议的最终 task id，再确认是否创建任务；如果确认来自结构化问答，就运行 `mewoflow confirm-task` 或 `mewoflow check pending-task-confirmation`，不要手动写 `.mewoflow/tasks`；再补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`；分别运行 `mewoflow check research`、`mewoflow check grill`；展示计划并等你批准后，再运行 `mewoflow check plan` 进入 `implement`，最后才能创建项目或改代码。
+继续方式是：Claude 先解释你的自然语言判断回复并运行 `mewoflow accept-judgment --session <session-id>` 或 `mewoflow reject-judgment --reason "..." --session <session-id>`；判断接受后，再运行 `mewoflow propose-task --title "..." --slug "..." --session <session-id>` 固化模型建议的最终 task id；你确认创建任务后运行 `mewoflow confirm-task --session <session-id>`，取消则运行 `mewoflow cancel-task --session <session-id>`，不要手动写 `.mewoflow/tasks`。之后补齐 `.mewoflow/tasks/<task>/research.md`、`grill.md`、`plan.md`；分别运行 `mewoflow check research`、`mewoflow check grill`；展示计划并在 Claude 判断你已批准后运行 `mewoflow approve-plan --prompt "..." --session <session-id>`，最后才能 `mewoflow check plan` 进入 `implement` 并创建项目或改代码。
 
 ### 已确认但还是卡在 pending task
 
-如果 transcript 里显示你已经在 Claude 的选择题/结构化问答中点了“确认创建”，但 hook 仍提示 pending task，说明确认没有通过新的用户消息触发 `UserPromptSubmit`。这不是让 Claude 手动建目录的理由。正确做法是让 Claude 运行：
+如果 transcript 里显示你已经在 Claude 的选择题/结构化问答中点了“确认创建”，但 hook 仍提示 pending task，说明确认没有对应的显式 CLI 状态转换。这不是让 Claude 手动建目录的理由。正确做法是让 Claude 运行：
 
 ```bash
-npx mewoflow check pending-task-confirmation
+npx mewoflow confirm-task --session <session-id>
 ```
 
-这些命令会由 MewoFlow CLI 从 session 中读取 pending task，创建正式任务目录，并把 gate 设为 `research`。
+这个命令会由 MewoFlow CLI 从 session 中读取 pending task，创建正式任务目录，并把 gate 设为 `research`。
 
 ### Claude 写完计划后仍想直接运行 `pnpm create`
 
-`mewoflow check plan` 要求显式用户批准。Claude 必须先展示 `plan.md`，等你明确说 `同意计划`、`确认执行`、`开始实现` 等批准语句后，hook 才会记录 plan approval。若批准来自结构化问答，应运行 `mewoflow approve-plan --prompt "..."`。没有该记录时，即使计划内容有效，也不能进入 `implement`，脚手架和实现写入会继续被拦截。
+`mewoflow check plan` 要求显式用户批准。Claude 必须先展示 `plan.md`，理解你的自然语言回复是否已经批准计划，然后运行 `mewoflow approve-plan --prompt "..." --session <session-id>` 记录批准。hook 不会根据固定批准短语自动写入 approval。没有该记录时，即使计划内容有效，也不能进入 `implement`，脚手架和实现写入会继续被拦截。
 
 ### `grill-me` 缺失或 grill 只问一轮
 
@@ -211,7 +228,7 @@ npx mewoflow init
 
 | Gate                        | Purpose                              | Evidence                                                        |
 | --------------------------- | ------------------------------------ | --------------------------------------------------------------- |
-| `pending-task-confirmation` | 新开发需求先等待用户确认是否创建任务                   | draft pending id、模型提交 title/slug、猫咪提示、用户确认/取消                   |
+| `pending-task-confirmation` | 新开发需求先等待判断复核和用户确认是否创建任务                   | prompt judgment、accept/reject 命令、draft pending id、模型提交 title/slug、confirm/cancel 命令                   |
 | `research`                  | 获取最新资料和上下文                           | Tool Evidence、来源、事实、假设、未知项、对任务的影响                               |
 | `grill`                     | 直接使用 project-local `grill-me` 追问关键需求 | skill 使用记录、问题、推荐答案、用户答案、决策覆盖、风险/预算/部署/安全/回滚、模型/assistant 停止追问理由 |
 | `plan`                      | 写实现计划                                | 快捷/现成方案扫描、MVP 切片、parent/child breakdown、阶段、延后项、风险、验证方式          |
@@ -290,10 +307,13 @@ MewoFlow 参考了 Trellis 的文件化上下文、任务证据、hooks/commands
 | `mewoflow status`                                  | 查看当前任务和 gate。                                           |
 | `mewoflow doctor`                                  | 检查本地文件、hook 配置、doctor skill 和任务状态。                      |
 | `mewoflow doctor --require-search`                 | 要求当前 session 已记录搜索工具调用。                                 |
-| `mewoflow propose-task --title "..." --slug "..."` | 为 pending task 记录模型建议的最终标题和 slug。                       |
-| `mewoflow check pending-task-confirmation`         | 用户已确认 pending task 后，由 CLI 受控创建正式任务。                    |
-| `mewoflow confirm-task`                            | `check pending-task-confirmation` 的短别名。                 |
-| `mewoflow approve-plan --prompt "..."`             | 结构化批准没有触发用户消息时，受控记录 plan approval。                      |
+| `mewoflow accept-judgment --session <id>`           | 接受当前 pending judgment；workflow 判断会创建 pending task 草稿。 |
+| `mewoflow reject-judgment --reason "..." --session <id>` | 拒绝当前 pending judgment，并记录用户纠正原因。 |
+| `mewoflow propose-task --title "..." --slug "..." --session <id>` | 为 pending task 记录模型建议的最终标题和 slug。                       |
+| `mewoflow confirm-task --session <id>`              | 用户已确认 pending task 后，由 CLI 受控创建正式任务。                    |
+| `mewoflow cancel-task --session <id>`               | 用户取消 pending task 后，由 CLI 清除草稿。                 |
+| `mewoflow check pending-task-confirmation`          | `confirm-task` 的兼容命令。                    |
+| `mewoflow approve-plan --prompt "..." --session <id>` | Claude 判断用户已批准计划后，受控记录 plan approval。                      |
 | `mewoflow split-task --from-plan`                  | parent epic 计划批准后，按 plan 中的 child task breakdown 拆分子任务。 |
 | `mewoflow check <gate>`                            | 校验当前 gate 证据并进入下一阶段。                                    |
 | `mewoflow commit --message "..."`                  | 受控创建本地 git commit；拒绝疑似 secret 文件，不会 push。                 |

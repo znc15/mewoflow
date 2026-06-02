@@ -29,7 +29,21 @@ describe("mewoflow gated workflow", () => {
     expect(JSON.stringify(blockedBeforeJudgmentReview)).toContain("Pending MewoFlow prompt judgment");
 
     const proposed = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(proposed.additionalContext)).toContain("pending task proposed after judgment confirmation");
+    expect(String(proposed.additionalContext)).toContain("accept-judgment");
+    expect(String(proposed.additionalContext)).toContain("propose-task");
+    session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeUndefined();
+
+    const allowedAcceptJudgmentCommand = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow accept-judgment --session s1" },
+    });
+    expect(JSON.stringify(allowedAcceptJudgmentCommand)).not.toContain("deny");
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeUndefined();
     expect(session.pendingTask).toBeTruthy();
@@ -42,14 +56,21 @@ describe("mewoflow gated workflow", () => {
     });
     expect(JSON.stringify(blockedBeforeConfirmation)).toContain("waiting for explicit user confirmation");
 
-    const allowedConfirmationCommand = await handlePreToolUse(root, {
+    const allowedProposeCommand = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Bash",
       tool_input: { command: "npx mewoflow propose-task --title \"开发音乐网站\" --slug music-site --session s1" },
     });
-    expect(JSON.stringify(allowedConfirmationCommand)).not.toContain("deny");
+    expect(JSON.stringify(allowedProposeCommand)).not.toContain("deny");
     await expect(main(["propose-task", "--title", "开发音乐网站", "--slug", "music-site", "--session", "s1"], root)).resolves.toBe(0);
-    await expect(main(["check", "pending-task-confirmation"], root)).resolves.toBe(0);
+
+    const pendingConfirmation = await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: "s1" });
+    expect(String(pendingConfirmation.additionalContext)).toContain("confirm-task");
+    session = await loadSession(root, "s1");
+    expect(session.pendingTask).toBeTruthy();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
 
     session = await loadSession(root, "s1");
     expect(session.activeTaskId).toBeTruthy();
@@ -174,8 +195,12 @@ Build a focused music website MVP.
 `,
     );
 
-    const approved = await handleUserPromptSubmit(root, { prompt: "同意计划，开始实现", session_id: "s1" });
-    expect(String(approved.additionalContext)).toContain("MewoFlow plan approved");
+    await expect(main(["check", "plan"], root)).resolves.toBe(1);
+
+    const approved = await handleUserPromptSubmit(root, { prompt: "这个计划可以按你的判断推进", session_id: "s1" });
+    expect(String(approved.additionalContext)).toContain("approve-plan");
+    expect(String(approved.additionalContext)).not.toContain("MewoFlow plan approved");
+    await expect(main(["approve-plan", "--prompt", "这个计划可以按你的判断推进", "--session", "s1"], root)).resolves.toBe(0);
     await expect(main(["check", "plan"], root)).resolves.toBe(0);
 
     const blockedBeforeReads = await handlePreToolUse(root, {

@@ -1,9 +1,4 @@
 import {
-  approvePlan,
-  clearPendingJudgment,
-  clearPendingTask,
-  confirmPendingTask,
-  createPendingTask,
   getActiveTask,
   hasPlanApproval,
   loadSession,
@@ -14,7 +9,6 @@ import {
   recordSkillUse,
   requiredImplementationReads,
   setPendingJudgment,
-  setPendingTask,
   type TaskType,
   type Task,
   type PendingTask,
@@ -95,29 +89,16 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
   }
 
   if (session.pendingTask && !session.activeTaskId) {
-    return handlePendingPrompt(root, sessionId, prompt, session.pendingTask);
+    return handlePendingPrompt(sessionId, session.pendingTask);
   }
 
   if (session.pendingJudgment && !session.activeTaskId) {
-    return handlePendingJudgmentPrompt(root, sessionId, prompt, session.pendingJudgment);
+    return handlePendingJudgmentPrompt(sessionId, session.pendingJudgment);
   }
 
   const activeTask = await getActiveTask(root, sessionId);
 
   if (activeTask && activeTask.gate !== "done") {
-    if (activeTask.gate === "plan" && isPlanApprovalPrompt(prompt)) {
-      await approvePlan(root, activeTask.id, sessionId, prompt);
-      return promptContext(
-        [
-          `MewoFlow plan approved: ${activeTask.id}`,
-          `Current gate: ${activeTask.gate}`,
-          visibleTaskNotice(`MewoFlow plan approved: ${activeTask.id}`, activeTask.gate),
-          "User explicitly approved the plan. The next `mewoflow check plan` may advance to implement.",
-          "After the plan gate passes, read required MewoFlow context before implementation writes.",
-        ].join("\n"),
-      );
-    }
-
     return promptContext(
       [
         `MewoFlow active task: ${activeTask.id}`,
@@ -127,16 +108,19 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         "Continue the current gate. Do not create a new task or skip ahead.",
         "Required gate order: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
         nextActionForGate(activeTask),
+        activeTask.gate === "plan"
+          ? `If the latest user response approves the plan, do not let this hook infer it from natural language; run \`npx mewoflow approve-plan --prompt "<user approval>" --session ${sessionId}\` before \`mewoflow check plan\`.`
+          : "",
       ].join("\n"),
     );
   }
 
   if (session.pendingTask) {
-    return handlePendingPrompt(root, sessionId, prompt, session.pendingTask);
+    return handlePendingPrompt(sessionId, session.pendingTask);
   }
 
   if (session.pendingJudgment) {
-    return handlePendingJudgmentPrompt(root, sessionId, prompt, session.pendingJudgment);
+    return handlePendingJudgmentPrompt(sessionId, session.pendingJudgment);
   }
 
   const judgment = judgePrompt(prompt);
@@ -149,7 +133,7 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         ...promptJudgmentLines(judgment),
         visibleJudgmentNotice(judgment),
         "MewoFlow: simple request detected. Full workflow is not required if the user agrees with this judgment.",
-        "Ask the user whether this judgment is correct before doing work. If they disagree, ask them to clarify whether this should be standard or epic.",
+        `Ask the user whether this judgment is correct before doing work. If they accept, run \`npx mewoflow accept-judgment --session ${sessionId}\`; if they disagree, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` and ask for the corrected classification or request.`,
       ].join("\n"),
     );
   }
@@ -159,8 +143,8 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
       ...promptJudgmentLines(judgment),
       visibleJudgmentNotice(judgment),
       "No pending task has been proposed yet. First ask the user whether this judgment is correct.",
-      "If the user agrees with the judgment, then run `npx mewoflow propose-task --title \"<model title>\" --slug \"descriptive-kebab-slug\"` and ask whether to create the task.",
-      "If the user says the judgment is wrong, ask them to correct it before proposing or creating any task.",
+      `If the user accepts the judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\`. That command creates the pending task draft; only after that run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\` and ask whether to create the task.`,
+      `If the user says the judgment is wrong, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` before asking for the corrected classification or request.`,
       "Do not start research, ask requirements, write task files, scaffold, install dependencies, or edit code before judgment review and task confirmation.",
     ].join("\n"),
   );
@@ -174,6 +158,10 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
   const writeAttempt = isWriteAttempt(tool, command);
 
   if (isControlledGitCommitCommand(command)) {
+    return allowPreToolUse();
+  }
+
+  if (isControlledJudgmentCommand(command)) {
     return allowPreToolUse();
   }
 
@@ -280,39 +268,11 @@ export async function handleStop(root: string, input: HookInput): Promise<Record
   };
 }
 
-async function handlePendingPrompt(root: string, sessionId: string, prompt: string, pendingTask: PendingTask): Promise<Record<string, unknown>> {
-  if (isTaskRejectionPrompt(prompt)) {
-    await clearPendingTask(root, sessionId);
-    return promptContext(`MewoFlow pending task cancelled: ${pendingTask.id}. No workflow task was created.`);
-  }
+async function handlePendingPrompt(sessionId: string, pendingTask: PendingTask): Promise<Record<string, unknown>> {
+  return pendingTaskPromptContext(sessionId, pendingTask);
+}
 
-  if (isTaskConfirmationPrompt(prompt)) {
-    const task = await confirmPendingTask(root, sessionId);
-    if (task) {
-      return promptContext(
-        [
-          `MewoFlow task created after user confirmation: ${task.id}`,
-          `Type: ${task.type}`,
-          `Current gate: ${task.gate}`,
-          visibleTaskNotice(`MewoFlow task created after user confirmation: ${task.id}`, task.gate),
-          "Normal flow must complete: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
-          "Next action: complete research with Tool Evidence from WebSearch/WebFetch/MCP/skill or user-provided-source evidence, then run `mewoflow check research`.",
-          "Do not skip direct project-local grill-me usage, plan shortcut scan, plan approval, implementation context reads, verify, or archive.",
-        ].join("\n"),
-      );
-    }
-
-    return promptContext(
-      [
-        `MewoFlow pending task ${pendingTask.id} was confirmed by the user, but no model-proposed title/slug has been recorded yet.`,
-        `Type: ${pendingTask.type}`,
-        `Draft title: ${pendingTask.title}`,
-        "Do not manually create task files.",
-        `Mandatory next tool actions: run \`npx mewoflow propose-task --title \"<model title>\" --slug \"descriptive-kebab-slug\" --session ${sessionId}\`, then run \`npx mewoflow confirm-task --session ${sessionId}\`.`,
-      ].join("\n"),
-    );
-  }
-
+function pendingTaskPromptContext(sessionId: string, pendingTask: PendingTask): Record<string, unknown> {
   return promptContext(
     [
       `MewoFlow pending task awaiting user confirmation: ${pendingTask.id}`,
@@ -322,71 +282,33 @@ async function handlePendingPrompt(root: string, sessionId: string, prompt: stri
       pendingTask.proposedSlug ? `Proposed slug: ${pendingTask.proposedSlug}` : "Proposed slug: not recorded yet",
       visiblePendingTaskNotice(pendingTask, sessionId),
       "Do not create task files, research, grill, plan, scaffold, install dependencies, or edit code until the user explicitly confirms task creation.",
-      "If proposed title/slug are missing, run `npx mewoflow propose-task --title \"<model title>\" --slug \"descriptive-kebab-slug\"` before asking for or consuming confirmation.",
-      "If confirmation was collected through a structured question, run `npx mewoflow confirm-task` only after `propose-task`. Never create `.mewoflow/tasks` by hand.",
+      "This hook does not infer task confirmation or cancellation from natural-language replies.",
+      pendingTask.proposedTitle && pendingTask.proposedSlug
+        ? `If the latest user response confirms task creation, run \`npx mewoflow confirm-task --session ${sessionId}\`. If the latest user response cancels it, run \`npx mewoflow cancel-task --session ${sessionId}\`. Never create \`.mewoflow/tasks\` by hand.`
+        : `First run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\`, then ask the user whether to create the task. If the user cancels, run \`npx mewoflow cancel-task --session ${sessionId}\`.`,
     ].join("\n"),
   );
 }
 
-async function handlePendingJudgmentPrompt(root: string, sessionId: string, prompt: string, pendingJudgment: PendingJudgment): Promise<Record<string, unknown>> {
+async function handlePendingJudgmentPrompt(sessionId: string, pendingJudgment: PendingJudgment): Promise<Record<string, unknown>> {
   const judgment: PromptJudgment = {
     classification: pendingJudgment.classification,
     requiresWorkflow: pendingJudgment.requiresWorkflow,
     reason: pendingJudgment.reason,
   };
 
-  if (isJudgmentApprovalPrompt(prompt)) {
-    if (pendingJudgment.classification === "simple") {
-      await clearPendingJudgment(root, sessionId);
-      return promptContext(
-        [
-          ...promptJudgmentLines(judgment),
-          "MewoFlow judgment accepted by the user: no workflow task will be created for this prompt.",
-          `Original prompt: ${pendingJudgment.prompt}`,
-          "Proceed only with the accepted simple request. If the work escalates into implementation file creation, scaffolding, dependency changes, or broader development, start a new MewoFlow judgment/task flow first.",
-        ].join("\n"),
-      );
-    }
-
-    const pendingTask = await createPendingTask(root, {
-      title: pendingJudgment.prompt,
-      type: pendingJudgment.classification,
-      prompt: pendingJudgment.prompt,
-    });
-    await setPendingTask(root, pendingTask, sessionId);
-    return promptContext(
-      [
-        ...promptJudgmentLines(judgment),
-        "MewoFlow judgment accepted by the user.",
-        `MewoFlow pending task proposed after judgment confirmation: ${pendingTask.id}`,
-        `Type: ${pendingTask.type}`,
-        `Draft title: ${pendingTask.title}`,
-        visiblePendingTaskNotice(pendingTask, sessionId, judgment),
-        `Mandatory next tool action: run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\`, then ask the user whether to create the task.`,
-        "Do not create task files, research, grill, plan, scaffold, install dependencies, or edit code before pending task confirmation.",
-      ].join("\n"),
-    );
-  }
-
-  if (isJudgmentRejectionPrompt(prompt)) {
-    await clearPendingJudgment(root, sessionId);
-    return promptContext(
-      [
-        ...promptJudgmentLines(judgment),
-        "MewoFlow prompt judgment rejected by the user. No pending task was proposed or created.",
-        "Ask the user to correct the classification before doing work: simple / standard / epic, and ask for the reason or clarified request if needed.",
-        "After the user provides the corrected request or classification, run a fresh MewoFlow judgment step. Do not write files, scaffold, install dependencies, or edit code yet.",
-      ].join("\n"),
-    );
-  }
-
   return promptContext(
     [
-      "MewoFlow pending prompt judgment awaiting user review.",
+      "MewoFlow pending prompt judgment awaiting command-driven user review.",
       ...promptJudgmentLines(judgment),
       visibleJudgmentNotice(judgment),
       "Ask the user exactly whether this judgment has a problem before doing anything else: `这个 MewoFlow 判断有问题吗？如果没问题我再继续；如果有问题请告诉我应改成 simple / standard / epic。`",
-      "Do not propose a task, create task files, research, grill, plan, scaffold, install dependencies, or edit code until the user answers the judgment review.",
+      "This hook does not infer judgment acceptance or rejection from natural-language replies.",
+      pendingJudgment.classification === "simple"
+        ? `If the latest user response accepts this simple judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\` to clear the pending judgment without creating a task.`
+        : `If the latest user response accepts this workflow judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\`; then run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\` before asking for task creation confirmation.`,
+      `If the latest user response rejects or corrects this judgment, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` before asking for the corrected classification or request.`,
+      "Do not propose a task, create task files, research, grill, plan, scaffold, install dependencies, or edit code until the judgment is resolved by one of those explicit commands.",
     ].join("\n"),
   );
 }
@@ -459,7 +381,7 @@ function visiblePendingTaskNotice(pendingTask: PendingTask, sessionId: string, j
   return [
     "Mandatory visible response: In your next assistant message, tell the user this MewoFlow hook fired, show the prompt judgment, and state that no task has been created yet.",
     `Start with: "${hookNotice("UserPromptSubmit")} 猫咪先判断需求喵！${judgmentText}猫咪发现一个新开发需求喵！发现 draft task: ${pendingTask.id}. ${proposed} 请确认是否创建任务。"`,
-    "Do not ask requirements, research, grill, plan, or implement until the user confirms task creation. If confirmation is collected through a structured question rather than a new user prompt, run `npx mewoflow confirm-task`; do not manually create .mewoflow task files.",
+    `Do not ask requirements, research, grill, plan, or implement until the user confirms task creation and Claude runs an explicit command. If the user confirms, run \`npx mewoflow confirm-task --session ${sessionId}\`; if the user cancels, run \`npx mewoflow cancel-task --session ${sessionId}\`. Do not manually create .mewoflow task files.`,
   ].join(" ");
 }
 
@@ -493,7 +415,7 @@ function hookNotice(event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "
 function noActiveTaskWriteReason(): string {
   return [
     "No active MewoFlow task. Implementation writes, file creation, shell writes, scaffolding, or dependency changes are blocked until a workflow task is active.",
-    "Do not rely on prompt keyword matching as the safety boundary. If this write comes from a real development request, first show the MewoFlow prompt judgment and ask whether the judgment has a problem. Only after the user accepts that judgment may you run `npx mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\"`, ask the user to confirm task creation, then run `npx mewoflow confirm-task`.",
+    "Do not rely on prompt keyword matching as the safety boundary. If this write comes from a real development request, first show the MewoFlow prompt judgment and ask whether the judgment has a problem. If the user accepts the judgment, run `npx mewoflow accept-judgment`, then `npx mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\"`, ask the user to confirm task creation, and only then run `npx mewoflow confirm-task`.",
     "After confirmation, follow research -> grill -> plan -> user-approval before implementation writes, then verify -> review -> verify -> archive before claiming completion.",
   ].join(" ");
 }
@@ -502,7 +424,7 @@ function pendingJudgmentWriteReason(judgment: PendingJudgment): string {
   return [
     `Pending MewoFlow prompt judgment is waiting for user review. Classification: ${judgment.classification}; requires workflow: ${judgment.requiresWorkflow ? "yes" : "no"}; reason: ${judgment.reason}`,
     "Ask the user whether this judgment has a problem before proposing a task or doing work.",
-    "Do not write files, scaffold, install dependencies, create a task, or start research/grill/plan until the user confirms the judgment is correct.",
+    "Do not write files, scaffold, install dependencies, create a task, or start research/grill/plan until Claude resolves the judgment with `npx mewoflow accept-judgment` or `npx mewoflow reject-judgment --reason \"...\"`.",
   ].join(" ");
 }
 
@@ -510,7 +432,7 @@ function pendingTaskWriteReason(taskId: string): string {
   return [
     `Pending MewoFlow task ${taskId} is waiting for explicit user confirmation.`,
     "Do not write files, scaffold, install dependencies, or start research/grill/plan before the user confirms task creation.",
-    "Ask the user: `是否创建这个 MewoFlow task？` If the user already confirmed through a structured question, run `npx mewoflow check pending-task-confirmation` to let the MewoFlow CLI create the task.",
+    "Ask the user: `是否创建这个 MewoFlow task？` If the user confirms, run `npx mewoflow confirm-task`; if they cancel, run `npx mewoflow cancel-task`. Do not infer this in the hook from hardcoded reply phrases.",
   ].join(" ");
 }
 
@@ -632,9 +554,24 @@ function isControlledMewoFlowCommand(command: string): boolean {
   const redirect = String.raw`(?:\s+2>&1)?`;
   const propose = String.raw`propose-task\s+--title\s+${quoted}\s+--slug\s+${quoted}${sessionArg}`;
   const confirm = String.raw`(?:confirm-task|check\s+pending-task-confirmation)${sessionArg}`;
-  const approve = String.raw`approve-plan${sessionArg}(?:\s+--prompt\s+${quoted})?`;
+  const cancel = String.raw`cancel-task${sessionArg}`;
+  const approveArgs = String.raw`(?:(?:\s+--session\s+${quoted})|(?:\s+--prompt\s+${quoted}))*`;
+  const approve = String.raw`approve-plan${approveArgs}`;
   const split = String.raw`split-task\s+--from-plan${sessionArg}`;
-  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${approve}|${split})${redirect}$`, "i").test(trimmed);
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split})${redirect}$`, "i").test(trimmed);
+}
+
+function isControlledJudgmentCommand(command: string): boolean {
+  const trimmed = command.trim();
+  const cdPrefix = String.raw`(?:cd\s+(?:"[^"]+"|'[^']+'|[^&;]+)\s*(?:&&|;)\s*)?`;
+  const mewoflow = String.raw`(?:npx\s+)?mewoflow`;
+  const quoted = String.raw`(?:(?:"[^"]+")|(?:'[^']+')|(?:[^\s&;|<>]+))`;
+  const sessionArg = String.raw`(?:\s+--session\s+${quoted})?`;
+  const redirect = String.raw`(?:\s+2>&1)?`;
+  const accept = String.raw`accept-judgment${sessionArg}`;
+  const rejectArgs = String.raw`(?:(?:\s+--reason\s+${quoted})|(?:\s+--session\s+${quoted}))+`;
+  const reject = String.raw`reject-judgment${rejectArgs}`;
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${accept}|${reject})${redirect}$`, "i").test(trimmed);
 }
 
 function isControlledGitCommitCommand(command: string): boolean {
@@ -650,30 +587,6 @@ function isControlledGitCommitCommand(command: string): boolean {
 function isMetaPrompt(prompt: string): boolean {
   const trimmed = prompt.trim();
   return /^\/mewoflow(?:-[a-z0-9-]+)?\b/i.test(trimmed) || /^mewoflow\s+(doctor|status|help|version|init|check|hook)\b/i.test(trimmed);
-}
-
-function isTaskConfirmationPrompt(prompt: string): boolean {
-  const trimmed = prompt.trim();
-  if (/^(确认|同意|可以|是|是的|创建|yes|ok)$/i.test(trimmed)) return true;
-  return /确认创建|同意创建|创建任务|开始\s*MewoFlow\s*任务|开始任务|批准创建|yes|ok/i.test(prompt);
-}
-
-function isTaskRejectionPrompt(prompt: string): boolean {
-  return /取消|不要创建|不创建|先别|no/i.test(prompt);
-}
-
-function isJudgmentApprovalPrompt(prompt: string): boolean {
-  const trimmed = prompt.trim();
-  if (/^(正确|對|对|对的|對的|是|是的|没错|沒錯|没问题|沒有问题|无问题|無問題|可以|可以继续|继续|同意|同意这个判断|yes|ok)$/i.test(trimmed)) return true;
-  return /判断.{0,8}(正确|没问题|沒有问题|无问题|無問題|对|對)|没问题|沒有问题|无问题|無問題|判断可以|判断通过|判断没错|对的|可以继续|继续|同意这个判断|yes|ok/i.test(prompt);
-}
-
-function isJudgmentRejectionPrompt(prompt: string): boolean {
-  return /判断.{0,8}(有问题|不对|不對|错|錯|错误|錯誤)|有问题|不对|不對|错了|錯了|不是|不应该|不應該|改成|应该是|應該是/i.test(prompt);
-}
-
-function isPlanApprovalPrompt(prompt: string): boolean {
-  return /批准|同意计划|确认计划|确认执行|开始实现|可以实现|进入实现|执行计划|按计划|approved|approve/i.test(prompt);
 }
 
 function hasShellWriteRedirection(command: string): boolean {

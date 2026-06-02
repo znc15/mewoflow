@@ -5,11 +5,13 @@ import { promisify } from "node:util";
 import { initProject } from "./init.js";
 import { runDoctor } from "./doctor.js";
 import {
+  acceptPendingJudgment,
   allChildTasksDone,
   appendArchiveToJournal,
   approvePlan,
   advanceTask,
   archiveTask,
+  cancelPendingTask,
   confirmPendingTask,
   getActiveTask,
   hasPlanApproval,
@@ -17,6 +19,7 @@ import {
   nextGateForCheck,
   proposePendingTask,
   readTaskMarkdown,
+  rejectPendingJudgment,
   saveTask,
   splitParentTaskFromPlan,
   type Gate,
@@ -61,9 +64,24 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
     return commitCommand(root, args);
   }
 
+  if (command === "accept-judgment") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return acceptJudgmentCommand(root, optionValue(args, "--session") ?? "default");
+  }
+
+  if (command === "reject-judgment") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return rejectJudgmentCommand(root, args);
+  }
+
   if (command === "propose-task") {
     const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
     return proposeTask(root, args);
+  }
+
+  if (command === "cancel-task") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return cancelTaskCommand(root, optionValue(args, "--session") ?? "default");
   }
 
   if (command === "confirm-task") {
@@ -122,6 +140,37 @@ async function printStatus(root: string): Promise<number> {
   return 0;
 }
 
+async function acceptJudgmentCommand(root: string, sessionId: string): Promise<number> {
+  const result = await acceptPendingJudgment(root, sessionId);
+  if (!result) return fail("No pending MewoFlow prompt judgment to accept.");
+
+  if (!result.pendingTask) {
+    console.log(`Prompt judgment accepted. Classification: ${result.judgment.classification}. No workflow task created.`);
+    return 0;
+  }
+
+  console.log([
+    "Prompt judgment accepted. Pending task draft created.",
+    `Draft: ${result.pendingTask.id}`,
+    `Type: ${result.pendingTask.type}`,
+    `Draft title: ${result.pendingTask.title}`,
+    "Next: mewoflow propose-task --title \"...\" --slug \"kebab-slug\", then mewoflow confirm-task after user confirmation.",
+  ].join("\n"));
+  return 0;
+}
+
+async function rejectJudgmentCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const reason = optionValue(args, "--reason");
+  if (!reason) return fail("Usage: mewoflow reject-judgment --reason \"...\" [--session <id>]");
+
+  const judgment = await rejectPendingJudgment(root, sessionId);
+  if (!judgment) return fail("No pending MewoFlow prompt judgment to reject.");
+
+  console.log(`Prompt judgment rejected. Classification: ${judgment.classification}\nReason: ${reason}`);
+  return 0;
+}
+
 async function proposeTask(root: string, args: string[]): Promise<number> {
   const title = optionValue(args, "--title");
   const slug = optionValue(args, "--slug");
@@ -136,6 +185,14 @@ async function proposeTask(root: string, args: string[]): Promise<number> {
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error));
   }
+}
+
+async function cancelTaskCommand(root: string, sessionId: string): Promise<number> {
+  const pendingTask = await cancelPendingTask(root, sessionId);
+  if (!pendingTask) return fail("No pending MewoFlow task to cancel.");
+
+  console.log(`Pending task cancelled. Draft: ${pendingTask.id}`);
+  return 0;
 }
 
 async function confirmTask(root: string, sessionId: string): Promise<number> {
@@ -201,7 +258,7 @@ async function checkGate(root: string, gate: Gate): Promise<number> {
   if (gate === "plan" && !hasPlanApproval(session, task.id)) {
     return fail([
       `Plan for task ${task.id} is valid, but explicit user approval is required before entering implement.`,
-      "Show the plan to the user and wait for an approval message such as `确认执行`, `开始实现`, or `同意计划`.",
+      "Show the plan to the user. When Claude determines the latest user response approved it, run `mewoflow approve-plan --prompt \"<user approval>\" --session <session-id>` before `mewoflow check plan`.",
     ].join("\n"));
   }
 

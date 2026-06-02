@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { main } from "../src/cli.js";
 import {
   MEWOFLOW_NOTICE_FIELD,
   handlePostToolUse,
@@ -10,7 +11,7 @@ import {
   handleUserPromptSubmit,
 } from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
-import { loadSession, loadTask, proposePendingTask, recordReadFile, sessionFile, taskFile } from "../src/task.js";
+import { loadSession, loadTask, recordReadFile, sessionFile, taskFile } from "../src/task.js";
 
 async function createConfirmedTask(root: string, sessionId = "s1") {
   const judgment = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: sessionId });
@@ -21,15 +22,23 @@ async function createConfirmedTask(root: string, sessionId = "s1") {
   expect(pending.activeTaskId).toBeUndefined();
 
   const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: sessionId });
-  expect(String(accepted.additionalContext)).toContain("pending task proposed after judgment confirmation");
+  expect(String(accepted.additionalContext)).toContain("accept-judgment");
+  pending = await loadSession(root, sessionId);
+  expect(pending.pendingJudgment).toBeTruthy();
+  expect(pending.pendingTask).toBeUndefined();
+  expect(pending.activeTaskId).toBeUndefined();
+
+  await expect(main(["accept-judgment", "--session", sessionId], root)).resolves.toBe(0);
   pending = await loadSession(root, sessionId);
   expect(pending.pendingTask).toBeTruthy();
   expect(pending.pendingJudgment).toBeUndefined();
   expect(pending.activeTaskId).toBeUndefined();
 
-  await proposePendingTask(root, { title: "修复登录 bug", slug: "login-bug", sessionId });
+  await expect(main(["propose-task", "--title", "修复登录 bug", "--slug", "login-bug", "--session", sessionId], root)).resolves.toBe(0);
 
-  await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: sessionId });
+  const confirmation = await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: sessionId });
+  expect(String(confirmation.additionalContext)).toContain("confirm-task");
+  await expect(main(["confirm-task", "--session", sessionId], root)).resolves.toBe(0);
   const active = await loadSession(root, sessionId);
   expect(active.activeTaskId).toBeTruthy();
   expect(active.pendingTask).toBeUndefined();
@@ -52,7 +61,13 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("judgment accepted");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
+    session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeUndefined();
     expect(session.pendingTask).toBeUndefined();
@@ -106,7 +121,7 @@ describe("hooks", () => {
     expect(String(output.additionalContext)).toContain("No pending task has been proposed yet");
     expect(String(output.additionalContext)).toContain("First ask the user whether this judgment is correct");
     expect(String(output.additionalContext)).toContain("Mandatory visible response");
-    expect(String(output.additionalContext)).not.toContain("MewoFlow pending task proposed after judgment confirmation");
+    expect(String(output.additionalContext)).not.toContain("Pending task draft created");
 
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
@@ -114,10 +129,15 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("MewoFlow pending task proposed after judgment confirmation");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
     expect(String(accepted.additionalContext)).toContain("propose-task");
-    expect(String(accepted.additionalContext)).toContain("请确认是否创建任务");
 
+    session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeTruthy();
     expect(session.pendingJudgment).toBeUndefined();
@@ -141,32 +161,43 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("MewoFlow pending task proposed after judgment confirmation");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
     expect(String(accepted.additionalContext)).toContain("propose-task");
-    expect(String(accepted.additionalContext)).toContain("请确认是否创建任务");
 
+    session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeTruthy();
     expect(session.pendingJudgment).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
   });
 
-  it("accepts bare judgment approval and bare task confirmation replies", async () => {
+  it("does not infer bare judgment approval or task confirmation replies", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await handleUserPromptSubmit(root, { prompt: "我想创建一个网页播放器，使用网易云的音乐", session_id: "s1" });
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "正确", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("MewoFlow pending task proposed after judgment confirmation");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
 
     let session = await loadSession(root, "s1");
-    expect(session.pendingJudgment).toBeUndefined();
-    expect(session.pendingTask).toBeTruthy();
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
 
-    await proposePendingTask(root, { title: "网易云网页音乐播放器", slug: "netease-web-music-player", sessionId: "s1" });
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["propose-task", "--title", "网易云网页音乐播放器", "--slug", "netease-web-music-player", "--session", "s1"], root)).resolves.toBe(0);
 
     const confirmed = await handleUserPromptSubmit(root, { prompt: "确认", session_id: "s1" });
-    expect(String(confirmed.additionalContext)).toContain("MewoFlow task created after user confirmation");
+    expect(String(confirmed.additionalContext)).toContain("confirm-task");
 
+    session = await loadSession(root, "s1");
+    expect(session.pendingTask).toBeTruthy();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeTruthy();
@@ -182,19 +213,27 @@ describe("hooks", () => {
     expect(session.pendingTask).toBeUndefined();
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("pending task proposed after judgment confirmation");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
 
     session = await loadSession(root, "s1");
-    expect(session.pendingJudgment).toBeUndefined();
-    expect(session.pendingTask).toBeTruthy();
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingTask).toBeUndefined();
 
-    await proposePendingTask(root, { title: "修复登录 bug", slug: "login-bug", sessionId: "s1" });
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["propose-task", "--title", "修复登录 bug", "--slug", "login-bug", "--session", "s1"], root)).resolves.toBe(0);
 
     const confirmed = await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: "s1" });
-    expect(String(confirmed.additionalContext)).toContain("MewoFlow task created after user confirmation");
-    expect(String(confirmed.additionalContext)).toContain("Current gate: research");
-    expect(String(confirmed.additionalContext)).toContain("Mandatory visible response");
-    expect(String(confirmed.additionalContext)).toContain("grill-me");
+    expect(String(confirmed.additionalContext)).toContain("confirm-task");
+
+    session = await loadSession(root, "s1");
+    expect(session.pendingTask).toBeTruthy();
+    expect(session.activeTaskId).toBeUndefined();
+
+    await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
+    const activeContext = await handleUserPromptSubmit(root, { prompt: "继续", session_id: "s1" });
+    expect(String(activeContext.additionalContext)).toContain("Current gate: research");
+    expect(String(activeContext.additionalContext)).toContain("Mandatory visible response");
+    expect(String(activeContext.additionalContext)).toContain("grill-me");
 
     const active = await loadSession(root, "s1");
     expect(active.activeTaskId).toBeTruthy();
@@ -217,10 +256,27 @@ describe("hooks", () => {
     expect(JSON.stringify(blockedDuringJudgment)).toContain("Pending MewoFlow prompt judgment");
 
     const waiting = await handleUserPromptSubmit(root, { prompt: "先说一下你会怎么做", session_id: "s1" });
-    expect(String(waiting.additionalContext)).toContain("pending prompt judgment awaiting user review");
+    expect(String(waiting.additionalContext)).toContain("pending prompt judgment awaiting command-driven user review");
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
-    expect(String(accepted.additionalContext)).toContain("pending task proposed after judgment confirmation");
+    expect(String(accepted.additionalContext)).toContain("accept-judgment");
+
+    const blockedProposeDuringJudgment = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow propose-task --title \"开发音乐网站\" --slug music-site --session s1" },
+    });
+    expect(JSON.stringify(blockedProposeDuringJudgment)).toContain("deny");
+    expect(JSON.stringify(blockedProposeDuringJudgment)).toContain("Pending MewoFlow prompt judgment");
+
+    const allowedAcceptJudgmentCommand = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow accept-judgment --session s1" },
+    });
+    expect(JSON.stringify(allowedAcceptJudgmentCommand)).not.toContain("deny");
+
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
 
     const blocked = await handlePreToolUse(root, {
       session_id: "s1",
@@ -236,11 +292,12 @@ describe("hooks", () => {
       tool_input: { command: "npx mewoflow propose-task --title \"开发音乐网站\" --slug music-site --session s1" },
     });
     expect(JSON.stringify(allowedProposeCommand)).not.toContain("deny");
+    await expect(main(["propose-task", "--title", "开发音乐网站", "--slug", "music-site", "--session", "s1"], root)).resolves.toBe(0);
 
     const allowedConfirmationCommand = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Bash",
-      tool_input: { command: "npx mewoflow check pending-task-confirmation" },
+      tool_input: { command: "npx mewoflow confirm-task --session s1" },
     });
     expect(JSON.stringify(allowedConfirmationCommand)).not.toContain("deny");
 
@@ -262,8 +319,20 @@ describe("hooks", () => {
     expect(String(repeated.additionalContext)).toContain("pending task awaiting user confirmation");
 
     const cancelled = await handleUserPromptSubmit(root, { prompt: "取消，不创建", session_id: "s1" });
-    expect(String(cancelled.additionalContext)).toContain("pending task cancelled");
-    const session = await loadSession(root, "s1");
+    expect(String(cancelled.additionalContext)).toContain("cancel-task");
+    let session = await loadSession(root, "s1");
+    expect(session.pendingTask).toBeTruthy();
+    expect(session.activeTaskId).toBeUndefined();
+
+    const allowedCancelCommand = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow cancel-task --session s1" },
+    });
+    expect(JSON.stringify(allowedCancelCommand)).not.toContain("deny");
+    await expect(main(["cancel-task", "--session", "s1"], root)).resolves.toBe(0);
+
+    session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
   });
@@ -372,8 +441,10 @@ describe("hooks", () => {
 
     task.gate = "plan";
     await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
-    const approved = await handleUserPromptSubmit(root, { prompt: "同意计划，开始实现", session_id: "s1" });
-    expect(String(approved.additionalContext)).toContain("MewoFlow plan approved");
+    const approved = await handleUserPromptSubmit(root, { prompt: "这个计划可以按你的判断推进", session_id: "s1" });
+    expect(String(approved.additionalContext)).toContain("approve-plan");
+    expect(String(approved.additionalContext)).not.toContain("MewoFlow plan approved");
+    await expect(main(["approve-plan", "--prompt", "这个计划可以按你的判断推进", "--session", "s1"], root)).resolves.toBe(0);
 
     task.gate = "implement";
     await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
