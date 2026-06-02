@@ -247,6 +247,26 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
   });
 
+  it("routes git commit prompts to the controlled commit command without creating workflow state", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+
+    const output = await handleUserPromptSubmit(root, { prompt: "提交", session_id: "s1" });
+
+    expect(String(output.additionalContext)).toContain("MewoFlow git commit request detected");
+    expect(String(output.additionalContext)).toContain("npx mewoflow commit");
+    const session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeUndefined();
+    expect(session.pendingTask).toBeUndefined();
+    expect(session.activeTaskId).toBeUndefined();
+
+    const allowedCommit = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow commit --message \"chore: test\" --dry-run" },
+    });
+    expect(JSON.stringify(allowedCommit)).not.toContain("deny");
+  });
+
   it("records search and file reads", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await handlePostToolUse(root, { session_id: "s1", tool_name: "WebSearch", tool_input: {} });

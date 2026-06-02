@@ -139,6 +139,45 @@ export function validateVerify(text: string, session?: SessionState, task?: Task
   return toResult(errors);
 }
 
+export function validateReview(text: string, session?: SessionState, task?: Task): ValidationResult {
+  const errors = requireSections(text, [
+    "## Result",
+    "## Scope",
+    "## File-by-file Review",
+    "## Architecture Impact",
+    "## Security",
+    "## Performance",
+    "## Maintainability",
+    "## Unresolved Questions",
+    "## Skill / Subagent Evidence",
+    "## Required Follow-up Verification",
+  ]);
+
+  if (!/## Result[\s\S]*?-\s*passed/i.test(text)) {
+    errors.push("Review result must be passed.");
+  }
+
+  if (!hasNonPlaceholderTableRow(sectionContent(text, "File-by-file Review"), ["file"])) {
+    errors.push("Review requires at least one non-placeholder file-by-file review row.");
+  }
+
+  const skillSection = sectionContent(text, "Skill / Subagent Evidence");
+  const documentsNoSuitableSkill = /no suitable skill|no relevant skill|无合适|没有合适|无需额外 skill/i.test(skillSection);
+  if (!hasNonPlaceholderTableRow(skillSection, ["skill", "subagent"]) && !documentsNoSuitableSkill) {
+    errors.push("Review must record relevant skill/subagent use, or explain why no suitable skill was available.");
+  }
+
+  if (session && task && !hasReviewStageSkillEvidence(session, task) && !documentsNoSuitableSkill) {
+    errors.push("Review should use a logged review-stage skill when one is suitable.");
+  }
+
+  if (/looks good|看起来没问题|大概没问题|trust me/i.test(text)) {
+    errors.push("Review must cite concrete files, risks, and decisions instead of generic approval claims.");
+  }
+
+  return toResult(errors);
+}
+
 export function validateArchive(text: string, task: Task): ValidationResult {
   const errors = requireSections(text, ["## Summary", "## Verification"]);
   if (task.overrides.length > 0 && !/override|风险|risk/i.test(text)) {
@@ -225,6 +264,13 @@ function hasPlanStageToolEvidence(session: SessionState, task: Task): boolean {
   return [...session.searchTools, ...session.skillUses].some((entry) => {
     const sameTask = !entry.taskId || entry.taskId === task.id;
     return sameTask && entry.gate === "plan";
+  });
+}
+
+function hasReviewStageSkillEvidence(session: SessionState, task: Task): boolean {
+  return session.skillUses.some((entry) => {
+    const sameTask = !entry.taskId || entry.taskId === task.id;
+    return sameTask && entry.gate === "review";
   });
 }
 

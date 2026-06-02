@@ -19,6 +19,7 @@ describe("initProject", () => {
     await expect(fs.stat(path.join(root, ".mewoflow", "specs", "testing.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "specs", "agent.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "tasks", ".gitkeep"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(root, ".mewoflow", "archive", ".gitkeep"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "settings.json"))).resolves.toBeTruthy();

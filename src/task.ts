@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { appendFileEnsured, pathExists, readJson, readTextIfExists, writeFileEnsured, writeJson } from "./fs.js";
 
-export type Gate = "research" | "grill" | "plan" | "implement" | "verify" | "archive" | "done";
+export type Gate = "research" | "grill" | "plan" | "implement" | "verify" | "review" | "archive" | "done";
 export type TaskType = "standard" | "epic";
 export type TaskRole = "standard" | "parent" | "child";
 
@@ -20,6 +20,7 @@ export type Task = {
   parentTaskId?: string;
   childTaskIds: string[];
   gate: Gate;
+  reviewed: boolean;
   created_at: string;
   updated_at: string;
   overrides: OverrideRecord[];
@@ -86,7 +87,7 @@ const gateAfterCheck: Partial<Record<Gate, Gate>> = {
   grill: "plan",
   plan: "implement",
   implement: "verify",
-  verify: "archive",
+  review: "verify",
   archive: "done",
 };
 
@@ -114,12 +115,24 @@ export function taskRoot(root: string): string {
   return path.join(mewoflowDir(root), "tasks");
 }
 
+export function archiveRoot(root: string): string {
+  return path.join(mewoflowDir(root), "archive");
+}
+
 export function taskDir(root: string, taskId: string): string {
   return path.join(taskRoot(root), taskId);
 }
 
+export function archivedTaskDir(root: string, taskId: string): string {
+  return path.join(archiveRoot(root), taskId);
+}
+
 export function taskFile(root: string, taskId: string, file: string): string {
   return path.join(taskDir(root, taskId), file);
+}
+
+export function archivedTaskFile(root: string, taskId: string, file: string): string {
+  return path.join(archivedTaskDir(root, taskId), file);
 }
 
 export function sessionFile(root: string, sessionId = "default"): string {
@@ -148,7 +161,8 @@ export function todayIsoDate(now = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-export function nextGateForCheck(gate: Gate): Gate | null {
+export function nextGateForCheck(gate: Gate, task?: Task): Gate | null {
+  if (gate === "verify") return task?.reviewed ? "archive" : "review";
   return gateAfterCheck[gate] ?? null;
 }
 
@@ -159,7 +173,7 @@ export async function createTask(
   const now = input.now ?? new Date();
   const date = todayIsoDate(now);
   const baseId = `${date}-${slugify(input.title)}`;
-  const id = input.id && !(await pathExists(taskDir(root, input.id))) ? input.id : await uniqueTaskId(root, baseId);
+  const id = input.id && !(await taskIdExists(root, input.id)) ? input.id : await uniqueTaskId(root, baseId);
   const iso = now.toISOString();
   const taskRole = input.taskRole ?? (input.type === "epic" ? "parent" : "standard");
   const task: Task = {
@@ -170,6 +184,7 @@ export async function createTask(
     parentTaskId: input.parentTaskId,
     childTaskIds: [],
     gate: input.gate ?? "research",
+    reviewed: false,
     created_at: iso,
     updated_at: iso,
     overrides: [],
@@ -180,6 +195,7 @@ export async function createTask(
   await writeFileEnsured(taskFile(root, id, "grill.md"), grillTemplate());
   await writeFileEnsured(taskFile(root, id, "plan.md"), planTemplate());
   await writeFileEnsured(taskFile(root, id, "verify.md"), verifyTemplate());
+  await writeFileEnsured(taskFile(root, id, "review.md"), reviewTemplate());
   await writeFileEnsured(taskFile(root, id, "archive.md"), archiveTemplate());
 
   return task;
@@ -214,17 +230,31 @@ export async function proposePendingTask(root: string, input: { title: string; s
 }
 
 export async function loadTask(root: string, taskId: string): Promise<Task> {
-  return normalizeTask(await readJson<Partial<Task>>(taskFile(root, taskId, "task.json")));
+  return normalizeTask(await readJson<Partial<Task>>(await taskJsonPath(root, taskId)));
 }
 
 export async function saveTask(root: string, task: Task): Promise<void> {
-  await writeJson(taskFile(root, task.id, "task.json"), { ...task, updated_at: new Date().toISOString() });
+  await writeJson(await taskJsonPath(root, task.id), { ...task, updated_at: new Date().toISOString() });
 }
 
 export async function advanceTask(root: string, task: Task, nextGate: Gate): Promise<Task> {
-  const updated = { ...task, gate: nextGate, updated_at: new Date().toISOString() };
-  await writeJson(taskFile(root, task.id, "task.json"), updated);
+  const updated = { ...task, gate: nextGate, reviewed: task.reviewed || (task.gate === "review" && nextGate === "verify"), updated_at: new Date().toISOString() };
+  await writeJson(await taskJsonPath(root, task.id), updated);
   return updated;
+}
+
+export async function archiveTask(root: string, task: Task): Promise<void> {
+  const source = taskDir(root, task.id);
+  const destination = archivedTaskDir(root, task.id);
+  if (!(await pathExists(source))) {
+    if (await pathExists(destination)) return;
+    throw new Error(`Cannot archive missing task directory: ${task.id}`);
+  }
+  if (await pathExists(destination)) {
+    throw new Error(`Archive directory already exists for task ${task.id}. Refusing to overwrite it.`);
+  }
+  await fs.mkdir(archiveRoot(root), { recursive: true });
+  await fs.rename(source, destination);
 }
 
 export async function loadSession(root: string, sessionId = "default"): Promise<SessionState> {
@@ -476,7 +506,7 @@ export function normalizePath(file: string, root?: string): string {
 }
 
 export async function readTaskMarkdown(root: string, task: Task, file: string): Promise<string> {
-  return (await readTextIfExists(taskFile(root, task.id, file))) ?? "";
+  return (await readTextIfExists(await taskMarkdownPath(root, task.id, file))) ?? "";
 }
 
 export async function appendArchiveToJournal(root: string, task: Task, archiveText: string): Promise<void> {
@@ -589,6 +619,7 @@ function normalizeTask(task: Partial<Task>): Task {
     parentTaskId: typeof task.parentTaskId === "string" ? task.parentTaskId : undefined,
     childTaskIds: Array.isArray(task.childTaskIds) ? task.childTaskIds.filter((id): id is string => typeof id === "string") : [],
     gate: task.gate,
+    reviewed: typeof task.reviewed === "boolean" ? task.reviewed : false,
     created_at: task.created_at,
     updated_at: task.updated_at,
     overrides: Array.isArray(task.overrides) ? task.overrides : [],
@@ -674,7 +705,7 @@ function normalizeCommandRecord(value: unknown): CommandRecord | null {
 }
 
 function isGate(value: unknown): value is Gate {
-  return value === "research" || value === "grill" || value === "plan" || value === "implement" || value === "verify" || value === "archive" || value === "done";
+  return value === "research" || value === "grill" || value === "plan" || value === "implement" || value === "verify" || value === "review" || value === "archive" || value === "done";
 }
 
 function normalizePlanApprovals(value: unknown): Record<string, PlanApproval> {
@@ -701,11 +732,27 @@ async function latestTaskId(root: string): Promise<string | null> {
 async function uniqueTaskId(root: string, baseId: string): Promise<string> {
   let id = baseId;
   let counter = 2;
-  while (await pathExists(taskDir(root, id))) {
+  while (await taskIdExists(root, id)) {
     id = `${baseId}-${counter}`;
     counter += 1;
   }
   return id;
+}
+
+async function taskIdExists(root: string, taskId: string): Promise<boolean> {
+  return (await pathExists(taskDir(root, taskId))) || (await pathExists(archivedTaskDir(root, taskId)));
+}
+
+async function taskJsonPath(root: string, taskId: string): Promise<string> {
+  const activePath = taskFile(root, taskId, "task.json");
+  if (await pathExists(activePath)) return activePath;
+  return archivedTaskFile(root, taskId, "task.json");
+}
+
+async function taskMarkdownPath(root: string, taskId: string, file: string): Promise<string> {
+  const activePath = taskFile(root, taskId, file);
+  if (await pathExists(activePath)) return activePath;
+  return archivedTaskFile(root, taskId, file);
 }
 
 function researchTemplate(): string {
@@ -721,9 +768,13 @@ function planTemplate(): string {
 }
 
 function verifyTemplate(): string {
-  return `# Verify\n\n## Result\n- blocked\n\n## Commands Run\n| Command | Result | Evidence |\n|---|---|---|\n\n## Critical Path\n| Path | Result | Evidence |\n|---|---|---|\n\n## Review\nReviewer:\nResult:\nFindings:\n\n## Notes\n`;
+  return `# Verify\n\n## Result\n- blocked\n\n## Commands Run\n| Command | Result | Evidence |\n|---|---|---|\n\n## Critical Path\n| Path | Result | Evidence |\n|---|---|---|\n\n## Review Follow-up\n| Review Item | Verification | Evidence |\n|---|---|---|\n\n## Notes\n`;
+}
+
+function reviewTemplate(): string {
+  return `# Review\n\n## Result\n- blocked\n\n## Scope\n\n## File-by-file Review\n| File | Finding | Decision |\n|---|---|---|\n\n## Architecture Impact\n\n## Security\n\n## Performance\n\n## Maintainability\n\n## Unresolved Questions\n- None\n\n## Skill / Subagent Evidence\n| Skill or Subagent | Purpose | Evidence |\n|---|---|---|\n\n## Required Follow-up Verification\n`;
 }
 
 function archiveTemplate(): string {
-  return `# Archive\n\n## Summary\n\n## Decisions\n\n## Verification\n\n## Follow-ups\n\n## Rule Updates\n- none\n`;
+  return `# Archive\n\n## Summary\n\n## Decisions\n\n## Verification\n\n## Review\n\n## Follow-ups\n\n## Archived Location\n.mewoflow/archive/<task-id>/\n\n## Rule Updates\n- none\n`;
 }

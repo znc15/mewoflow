@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   confirmPendingTask,
+  archiveTask,
+  archivedTaskDir,
   createPendingTask,
   createTask,
   loadSession,
@@ -29,10 +31,27 @@ describe("task store", () => {
     await expect(fs.stat(taskFile(root, task.id, "grill.md"))).resolves.toBeTruthy();
     await expect(fs.stat(taskFile(root, task.id, "plan.md"))).resolves.toBeTruthy();
     await expect(fs.stat(taskFile(root, task.id, "verify.md"))).resolves.toBeTruthy();
+    await expect(fs.stat(taskFile(root, task.id, "review.md"))).resolves.toBeTruthy();
     await expect(fs.stat(taskFile(root, task.id, "archive.md"))).resolves.toBeTruthy();
+    expect(task.reviewed).toBe(false);
 
     const loaded = await loadTask(root, task.id);
     expect(loaded.id).toBe(task.id);
+  });
+
+  it("moves completed task evidence into archive", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-task-"));
+    const task = await createTask(root, {
+      title: "归档任务",
+      type: "standard",
+      now: new Date("2026-06-01T08:00:00.000Z"),
+    });
+
+    await archiveTask(root, task);
+
+    await expect(fs.stat(taskFile(root, task.id, "task.json"))).rejects.toThrow();
+    await expect(fs.stat(archivedTaskDir(root, task.id))).resolves.toBeTruthy();
+    await expect(loadTask(root, task.id)).resolves.toMatchObject({ id: task.id });
   });
 
   it("requires a model-proposed title and slug before confirming a pending task", async () => {

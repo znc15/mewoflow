@@ -83,6 +83,17 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
   const sessionId = input.session_id ?? "default";
   const session = await loadSession(root, sessionId);
 
+  if (isGitCommitPrompt(prompt)) {
+    return promptContext(
+      [
+        "MewoFlow git commit request detected.",
+        "Do not create a workflow task for this prompt.",
+        "Mandatory next tool action: run `npx mewoflow commit --message \"<concise summary>\"`.",
+        "The command will refuse likely secret files, stage current git changes, and create a local commit only; do not push unless the user explicitly asks.",
+      ].join("\n"),
+    );
+  }
+
   if (session.pendingTask && !session.activeTaskId) {
     return handlePendingPrompt(root, sessionId, prompt, session.pendingTask);
   }
@@ -114,7 +125,7 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         `Current gate: ${activeTask.gate}`,
         visibleTaskNotice(`MewoFlow active task: ${activeTask.id}`, activeTask.gate),
         "Continue the current gate. Do not create a new task or skip ahead.",
-        "Required gate order: research -> grill -> plan -> implement -> verify -> archive.",
+        "Required gate order: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
         nextActionForGate(activeTask),
       ].join("\n"),
     );
@@ -161,6 +172,10 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
   const target = normalizePath(String(input.tool_input?.file_path ?? input.tool_input?.path ?? ""), root);
   const command = String(input.tool_input?.command ?? "");
   const writeAttempt = isWriteAttempt(tool, command);
+
+  if (isControlledGitCommitCommand(command)) {
+    return allowPreToolUse();
+  }
 
   if (isControlledMewoFlowCommand(command)) {
     const session = await loadSession(root, sessionId);
@@ -280,7 +295,7 @@ async function handlePendingPrompt(root: string, sessionId: string, prompt: stri
           `Type: ${task.type}`,
           `Current gate: ${task.gate}`,
           visibleTaskNotice(`MewoFlow task created after user confirmation: ${task.id}`, task.gate),
-          "Normal flow must complete: research -> grill -> plan -> implement -> verify -> archive.",
+          "Normal flow must complete: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
           "Next action: complete research with Tool Evidence from WebSearch/WebFetch/MCP/skill or user-provided-source evidence, then run `mewoflow check research`.",
           "Do not skip direct project-local grill-me usage, plan shortcut scan, plan approval, implementation context reads, verify, or archive.",
         ].join("\n"),
@@ -479,7 +494,7 @@ function noActiveTaskWriteReason(): string {
   return [
     "No active MewoFlow task. Implementation writes, file creation, shell writes, scaffolding, or dependency changes are blocked until a workflow task is active.",
     "Do not rely on prompt keyword matching as the safety boundary. If this write comes from a real development request, first show the MewoFlow prompt judgment and ask whether the judgment has a problem. Only after the user accepts that judgment may you run `npx mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\"`, ask the user to confirm task creation, then run `npx mewoflow confirm-task`.",
-    "After confirmation, follow research -> grill -> plan -> user-approval before implementation writes.",
+    "After confirmation, follow research -> grill -> plan -> user-approval before implementation writes, then verify -> review -> verify -> archive before claiming completion.",
   ].join(" ");
 }
 
@@ -529,10 +544,15 @@ function nextActionForGate(task: Task): string {
     return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing.`;
   }
   if (task.gate === "verify") {
-    return `Next action: record verification evidence in ${base}/verify.md and run \`mewoflow check verify\`.`;
+    return task.reviewed
+      ? `Next action: record post-review verification evidence in ${base}/verify.md, then run \`mewoflow check verify\` to advance to archive.`
+      : `Next action: record initial verification evidence in ${base}/verify.md, then run \`mewoflow check verify\` to advance to code review.`;
+  }
+  if (task.gate === "review") {
+    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, record findings in ${base}/review.md, then run \`mewoflow check review\`; after review, verify again before archive.`;
   }
   if (task.gate === "archive") {
-    return `Next action: summarize decisions and verification in ${base}/archive.md and run \`mewoflow check archive\`.`;
+    return `Next action: summarize decisions, verification, review, and follow-ups in ${base}/archive.md, then run \`mewoflow check archive\`; the task directory will move to .mewoflow/archive/${task.id}/.`;
   }
   return "Next action: start a new MewoFlow task before more implementation work.";
 }
@@ -579,7 +599,15 @@ function isMinorEditPrompt(prompt: string): boolean {
 }
 
 function isWorkflowTaskPrompt(prompt: string): boolean {
-  return isBuildFromScratchPrompt(prompt) || /修复|新增|添加|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|迁移|发布|提交|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt);
+  return isBuildFromScratchPrompt(prompt) || /修复|新增|添加|加入|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|更新|迁移|发布|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt);
+}
+
+function isGitCommitPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  if (/^(提交|提交git|git提交|git\s+commit|commit)$/i.test(trimmed)) return true;
+  const looksLikeCommit = /(?:git|代码|改动|当前变更|版本).{0,12}(?:提交|commit)|(?:提交|commit).{0,12}(?:git|代码|改动|当前变更|版本)/i.test(trimmed);
+  const includesNewWork = /修复|新增|添加|加入|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|更新|迁移|安装|依赖|测试|写|创建|制作|搭建/i.test(trimmed);
+  return trimmed.length <= 80 && looksLikeCommit && !includesNewWork;
 }
 
 function isBuildFromScratchPrompt(prompt: string): boolean {
@@ -607,6 +635,16 @@ function isControlledMewoFlowCommand(command: string): boolean {
   const approve = String.raw`approve-plan${sessionArg}(?:\s+--prompt\s+${quoted})?`;
   const split = String.raw`split-task\s+--from-plan${sessionArg}`;
   return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${approve}|${split})${redirect}$`, "i").test(trimmed);
+}
+
+function isControlledGitCommitCommand(command: string): boolean {
+  const trimmed = command.trim();
+  const cdPrefix = String.raw`(?:cd\s+(?:"[^"]+"|'[^']+'|[^&;]+)\s*(?:&&|;)\s*)?`;
+  const mewoflow = String.raw`(?:npx\s+)?mewoflow`;
+  const quoted = String.raw`(?:(?:"[^"]+")|(?:'[^']+')|(?:[^\s&;|<>]+))`;
+  const redirect = String.raw`(?:\s+2>&1)?`;
+  const arg = String.raw`(?:--dry-run|--message\s+${quoted}|--message=${quoted}|-m\s+${quoted}|-m=${quoted})`;
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+commit(?:\\s+${arg})*${redirect}$`, "i").test(trimmed);
 }
 
 function isMetaPrompt(prompt: string): boolean {
@@ -663,5 +701,5 @@ function isActiveTaskEvidenceCommand(command: string, task: Task): boolean {
 }
 
 function evidenceMarkdownFiles(): string[] {
-  return ["research.md", "grill.md", "plan.md", "verify.md", "archive.md"];
+  return ["research.md", "grill.md", "plan.md", "verify.md", "review.md", "archive.md"];
 }

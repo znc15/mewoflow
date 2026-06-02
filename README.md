@@ -47,7 +47,7 @@ npx mewoflow propose-task --title "修复登录 bug" --slug "login-bug"
 如果 Claude Code 用结构化问答收集了你的确认，可能不会触发新的 `UserPromptSubmit` hook。这种情况下 Claude 应先确保已运行 `npx mewoflow propose-task --title "..." --slug "..."`，再运行 `npx mewoflow confirm-task` 或 `npx mewoflow check pending-task-confirmation` 来创建任务；不允许手动 `mkdir .mewoflow/tasks/...` 或写任务状态文件。
 
 ```txt
-pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive
+pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive
 ```
 
 其中 `research.md` 必须写 `## Tool Evidence`，并证明用过 WebSearch、WebFetch、MCP、skill 或明确用户来源；不能把用户拒绝回答的问题或假设写成事实。
@@ -61,6 +61,16 @@ Claude 必须先把计划展示给你，等你明确回复 `同意计划`、`确
 ```bash
 npx mewoflow approve-plan --prompt "用户批准计划"
 ```
+
+实现完成后不能只跑一次验证就结束。标准流程必须先把初次验证证据写入 `verify.md`，通过 `mewoflow check verify` 进入 `review`；随后在 `review.md` 中记录逐文件代码 review、架构/安全/性能/可维护性影响，并在适合时使用 skill 或 subagent；`mewoflow check review` 通过后必须再次补充 post-review 验证证据，再通过第二次 `mewoflow check verify` 进入 `archive`。归档通过后，任务目录会移动到 `.mewoflow/archive/<task-id>/`。
+
+如果你只是让 Claude Code 提交当前 git 改动，例如输入 `提交` 或 `git 提交`，MewoFlow 不会为此创建 workflow task，而是要求运行受控命令：
+
+```bash
+npx mewoflow commit --message "简短提交说明"
+```
+
+该命令只创建本地 commit，不会 push；它会拒绝疑似 secret 文件，并可用 `--dry-run` 预览提交消息和变更文件。
 
 当 hooks 正常触发时，Claude Code transcript 里会出现类似 `猫咪正在监控你的需求喵！`、`猫咪正在检查工具调用喵！` 的提示。没有看到提示时，先运行 `/mewoflow` 或 `mewoflow doctor` 检查 `.claude/settings.json` 的 hook wiring。
 
@@ -80,7 +90,10 @@ mewoflow approve-plan --prompt "用户批准计划"
 mewoflow split-task --from-plan
 mewoflow check implement
 mewoflow check verify
+mewoflow check review
+mewoflow check verify
 mewoflow check archive
+mewoflow commit --message "chore: update workflow"
 ```
 
 异常情况下可以显式跳过当前 gate，但必须写明原因：
@@ -112,6 +125,16 @@ CLAUDE.md
       grill.md
       plan.md
       verify.md
+      review.md
+      archive.md
+  archive/
+    <task-id>/
+      task.json
+      research.md
+      grill.md
+      plan.md
+      verify.md
+      review.md
       archive.md
   runtime/
     mewoflow-hook.cjs
@@ -194,8 +217,9 @@ npx mewoflow init
 | `plan`                      | 写实现计划                                | 快捷/现成方案扫描、MVP 切片、parent/child breakdown、阶段、延后项、风险、验证方式          |
 | `user-approval`             | 用户明确批准计划后才允许进入实现                     | plan approval 记录、用户批准原文                                         |
 | `implement`                 | 允许修改代码                               | 计划已批准，且已读取规则和任务上下文                                              |
-| `verify`                    | 用证据证明结果                              | 命令输出、关键链路证据、review 记录                                           |
-| `archive`                   | 归档任务                                 | 总结、验证结果、后续事项                                                    |
+| `verify`                    | 初次验证与 review 后复验                      | 命令输出、关键链路证据、review follow-up 验证记录                              |
+| `review`                    | 对实现做代码 review                        | 逐文件 review、架构/安全/性能/可维护性影响、skill/subagent 证据或无合适 skill 说明       |
+| `archive`                   | 归档任务                                 | 总结、验证结果、review 结论、后续事项；目录移动到 `.mewoflow/archive/<task-id>/`        |
 
 
 ## Doctor
@@ -253,7 +277,7 @@ MewoFlow 参考了 Trellis 的文件化上下文、任务证据、hooks/commands
 | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | 面向多 AI 编程工具和团队工作流                                              | 只先支持 Claude Code                                                                                               |
 | 提供 spec、workspace、tasks、skills、sub-agents、commands、hooks 等完整体系 | 只做本地开发流程门禁                                                                                                     |
-| 可演进为跨平台协作层                                                     | 专注强制 pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive |
+| 可演进为跨平台协作层                                                     | 专注强制 pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive |
 | 平台能力更完整                                                        | 不做云同步、账号、团队权限、搜索 API Key 管理                                                                                    |
 
 
@@ -272,6 +296,8 @@ MewoFlow 参考了 Trellis 的文件化上下文、任务证据、hooks/commands
 | `mewoflow approve-plan --prompt "..."`             | 结构化批准没有触发用户消息时，受控记录 plan approval。                      |
 | `mewoflow split-task --from-plan`                  | parent epic 计划批准后，按 plan 中的 child task breakdown 拆分子任务。 |
 | `mewoflow check <gate>`                            | 校验当前 gate 证据并进入下一阶段。                                    |
+| `mewoflow commit --message "..."`                  | 受控创建本地 git commit；拒绝疑似 secret 文件，不会 push。                 |
+| `mewoflow commit --dry-run`                        | 预览提交消息和将要提交的文件，不写入 git。                                 |
 | `mewoflow override <gate> --reason "..."`          | 异常情况下跳过当前 gate。                                         |
 | `mewoflow hook <event>`                            | Claude Code hook 内部调用。                                  |
 

@@ -8,7 +8,7 @@ import { writeFileEnsured } from "../src/fs.js";
 import { loadSession, loadTask, taskFile } from "../src/task.js";
 
 describe("mewoflow gated workflow", () => {
-  it("requires task confirmation, grill coverage, plan approval, implementation reads, verify, and archive", async () => {
+  it("requires task confirmation, grill coverage, plan approval, implementation reads, verify, review, re-verify, and archive", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-e2e-"));
 
     await expect(main(["init"], root)).resolves.toBe(0);
@@ -230,6 +230,82 @@ Findings: none
     );
     await expect(main(["check", "verify"], root)).resolves.toBe(0);
 
+    let current = await loadTask(root, task.id);
+    expect(current.gate).toBe("review");
+    expect(current.reviewed).toBe(false);
+
+    await writeFileEnsured(
+      taskFile(root, task.id, "review.md"),
+      `# Review
+
+## Result
+- passed
+
+## Scope
+- Reviewed the implemented music MVP files and workflow evidence.
+
+## File-by-file Review
+| File | Finding | Decision |
+|---|---|---|
+| src/app.ts | Player/search behavior follows the approved MVP plan | Keep and verify again |
+
+## Architecture Impact
+- Frontend-only sample data remains within the planned MVP boundary.
+
+## Security
+- No auth, credentials, or private user data are introduced.
+
+## Performance
+- Sample data and local UI state do not add server or network hot paths.
+
+## Maintainability
+- Evidence stays split across verify.md and review.md for later audit.
+
+## Unresolved Questions
+- None
+
+## Skill / Subagent Evidence
+No suitable skill was available for this synthetic e2e code review fixture.
+
+## Required Follow-up Verification
+- Run npm test again after review.
+`,
+    );
+    await expect(main(["check", "review"], root)).resolves.toBe(0);
+
+    current = await loadTask(root, task.id);
+    expect(current.gate).toBe("verify");
+    expect(current.reviewed).toBe(true);
+
+    await handlePostToolUse(root, { session_id: "s1", tool_name: "Bash", tool_input: { command: "npm test" } });
+    await writeFileEnsured(
+      taskFile(root, task.id, "verify.md"),
+      `# Verify
+
+## Result
+- passed
+
+## Commands Run
+| Command | Result | Evidence |
+|---|---|---|
+| npm test | passed | Post-review Vitest run completed |
+
+## Critical Path
+| Path | Result | Evidence |
+|---|---|---|
+| review follow-up | passed | Review findings required no code changes and tests still pass |
+
+## Review Follow-up
+| Review Item | Verification | Evidence |
+|---|---|---|
+| src/app.ts review | passed | Re-ran npm test after review |
+`,
+    );
+    await expect(main(["check", "verify"], root)).resolves.toBe(0);
+
+    current = await loadTask(root, task.id);
+    expect(current.gate).toBe("archive");
+
     await writeFileEnsured(
       taskFile(root, task.id, "archive.md"),
       `# Archive
@@ -239,12 +315,17 @@ Findings: none
 
 ## Verification
 - npm test passed.
+
+## Review
+- review.md passed and post-review verification ran.
 `,
     );
     await expect(main(["check", "archive"], root)).resolves.toBe(0);
 
     const done = await loadTask(root, task.id);
     expect(done.gate).toBe("done");
+    await expect(fs.stat(path.join(root, ".mewoflow", "tasks", task.id))).rejects.toThrow();
+    await expect(fs.stat(path.join(root, ".mewoflow", "archive", task.id))).resolves.toBeTruthy();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateGrill } from "../src/validators.js";
+import { validateGrill, validateReview } from "../src/validators.js";
 
 const validGrill = `# Grill
 
@@ -81,5 +81,67 @@ describe("validateGrill", () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors).toContain("Grill requires non-empty Reason.");
+  });
+});
+
+const validReview = `# Review
+
+## Result
+- passed
+
+## Scope
+Reviewed changed workflow, CLI, and validators.
+
+## File-by-file Review
+| File | Finding | Decision |
+|---|---|---|
+| src/cli.ts | Commit command has a secret-path guard and dry-run preview | Keep |
+
+## Architecture Impact
+Review gate is explicit and requires a second verification pass before archive.
+
+## Security
+Likely secret paths are refused by the controlled commit command.
+
+## Performance
+No hot-path runtime changes are introduced.
+
+## Maintainability
+Review evidence stays structured and auditable.
+
+## Unresolved Questions
+- None
+
+## Skill / Subagent Evidence
+No suitable skill was available for this synthetic validator test.
+
+## Required Follow-up Verification
+Run npm test after review.
+`;
+
+describe("validateReview", () => {
+  it("accepts concrete file review with skill decision evidence", () => {
+    expect(validateReview(validReview)).toEqual({ ok: true, errors: [] });
+  });
+
+  it("rejects generic review approval claims", () => {
+    const result = validateReview(validReview.replace("Review evidence stays structured and auditable.", "Looks good."));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Review must cite concrete files, risks, and decisions instead of generic approval claims.");
+  });
+
+  it("requires file-by-file review rows", () => {
+    const result = validateReview(validReview.replace("| src/cli.ts | Commit command has a secret-path guard and dry-run preview | Keep |", ""));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Review requires at least one non-placeholder file-by-file review row.");
+  });
+
+  it("requires skill/subagent evidence or an explicit no-suitable-skill explanation", () => {
+    const result = validateReview(validReview.replace("No suitable skill was available for this synthetic validator test.", ""));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContain("Review must record relevant skill/subagent use, or explain why no suitable skill was available.");
   });
 });

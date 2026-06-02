@@ -25,6 +25,7 @@ export async function initProject(root = process.cwd()): Promise<void> {
   await writeFileIfMissing(path.join(root, ".mewoflow", "specs", "testing.md"), testingSpecTemplate());
   await writeFileIfMissing(path.join(root, ".mewoflow", "specs", "agent.md"), agentSpecTemplate());
   await writeFileEnsured(path.join(root, ".mewoflow", "tasks", ".gitkeep"), "");
+  await writeFileEnsured(path.join(root, ".mewoflow", "archive", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "sessions", ".gitkeep"), "");
   await writeFileEnsured(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), hookShimTemplate());
   await writeFileIfMissing(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), entrySkillTemplate());
@@ -107,7 +108,7 @@ function agentsTemplate(): string {
     "For standard and complex development tasks, first show the MewoFlow judgment and ask the user whether that judgment has a problem. After the user accepts the judgment, ask the user to confirm task creation, then follow the full workflow:",
     "",
     "```txt",
-    "judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive",
+    "judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive",
     "```",
     "",
     "Rules:",
@@ -125,12 +126,14 @@ function agentsTemplate(): string {
     "- Show the plan to the user and wait for explicit approval before running `mewoflow check plan` or entering implementation.",
     "- If plan approval was collected through structured UI, run `mewoflow approve-plan --prompt \"...\"` before `mewoflow check plan`.",
     "- Do not edit implementation files before the active task reaches the `implement` gate with plan approval recorded.",
-    "- Do not claim completion without command evidence, critical-path evidence, and review notes in `verify.md`.",
+    "- After implementation, run initial `verify`, then write a concrete code `review.md`, use a relevant skill/subagent when suitable, run `mewoflow check review`, verify again, and only then archive.",
+    "- Do not claim completion without command evidence, critical-path evidence in `verify.md`, and file-by-file review evidence in `review.md`.",
+    "- When the user asks to commit git changes, do not create a workflow task; run `mewoflow commit --message \"<summary>\"`. The command stages current changes, refuses likely secret files, creates a local commit, and never pushes.",
     "- Use `mewoflow status` to inspect the active task.",
     "- Use `mewoflow check <gate>` to advance a gate only after the evidence file is complete.",
     "- Use `mewoflow doctor` to check local wiring.",
     "",
-    "Task evidence lives in `.mewoflow/tasks/<task-id>/`.",
+    "Task evidence lives in `.mewoflow/tasks/<task-id>/` until archive; completed task folders move to `.mewoflow/archive/<task-id>/`.",
     "Project rules and compact specs live in `.mewoflow/rules.md`, `.mewoflow/workflow.md`, and `.mewoflow/specs/`.",
     "",
     "MewoFlow hooks are the hard enforcement layer. This file is soft guidance for AI agents.",
@@ -156,16 +159,18 @@ function claudeTemplate(): string {
     "- Plan must include a fresh shortcut/existing-solution scan and be shown to the user before explicit approval. Use `mewoflow approve-plan --prompt \"...\"` when approval is captured structurally.",
     "- From-scratch epic projects should use one parent epic for research/grill/plan, then split child tasks with `mewoflow split-task --from-plan` and complete children one by one.",
     "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
+    "- After implementation, complete `verify -> review -> verify -> archive`; `review.md` must cite concrete changed files and use a relevant skill/subagent when suitable.",
+    "- If the user asks to commit git changes, run `npx mewoflow commit --message \"<summary>\"`; do not create a workflow task and do not push.",
     "- Let hooks block incomplete work instead of bypassing the workflow.",
   ].join("\n") + "\n";
 }
 
 function rulesTemplate(): string {
-  return `# MewoFlow Rules\n\n- Follow the active task gate.\n- Standard and epic tasks must complete: judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive.\n- Before creating or skipping a task, make the MewoFlow prompt judgment visible: simple / standard / epic and why, then ask whether the judgment has a problem.\n- If the user says the judgment is wrong, ask for the corrected classification or clarified request before proposing or creating a task.\n- Do not create a task or start research until the user accepts the prompt judgment and then confirms the pending task proposal.\n- Pending task confirmation requires a model-proposed title/slug via \`mewoflow propose-task --title \"...\" --slug \"...\"\` before \`mewoflow confirm-task\` or \`mewoflow check pending-task-confirmation\`.\n- Use Claude Code WebSearch/WebFetch/MCP, relevant skill lookup, or user-provided sources during research; record them under \`## Tool Evidence\`.\n- Grill must use project-local grill-me, cover product/testing/risk/budget/infra/security/failure decisions, and record model/assistant stop judgment.\n- Before finalizing plan, run a fresh shortcut/existing-solution scan and record MVP slice, phases, deferred work, risks, and verification.\n- From-scratch epic projects should keep one parent task, list child tasks in plan, then split children with \`mewoflow split-task --from-plan\`.\n- Show plan to the user and record explicit approval before implementation; use \`mewoflow approve-plan --prompt \"...\"\` for structured approval.\n- Read this file plus task research/grill/plan before editing.\n- Do not claim completion without command, critical-path, and review evidence.\n`;
+  return `# MewoFlow Rules\n\n- Follow the active task gate.\n- Standard and epic tasks must complete: judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive.\n- Before creating or skipping a task, make the MewoFlow prompt judgment visible: simple / standard / epic and why, then ask whether the judgment has a problem.\n- If the user says the judgment is wrong, ask for the corrected classification or clarified request before proposing or creating a task.\n- Do not create a task or start research until the user accepts the prompt judgment and then confirms the pending task proposal.\n- Pending task confirmation requires a model-proposed title/slug via \`mewoflow propose-task --title \"...\" --slug \"...\"\` before \`mewoflow confirm-task\` or \`mewoflow check pending-task-confirmation\`.\n- Use Claude Code WebSearch/WebFetch/MCP, relevant skill lookup, or user-provided sources during research; record them under \`## Tool Evidence\`.\n- Grill must use project-local grill-me, cover product/testing/risk/budget/infra/security/failure decisions, and record model/assistant stop judgment.\n- Before finalizing plan, run a fresh shortcut/existing-solution scan and record MVP slice, phases, deferred work, risks, and verification.\n- From-scratch epic projects should keep one parent task, list child tasks in plan, then split children with \`mewoflow split-task --from-plan\`.\n- Show plan to the user and record explicit approval before implementation; use \`mewoflow approve-plan --prompt \"...\"\` for structured approval.\n- Read this file plus task research/grill/plan before editing.\n- After implementation, run initial verify, write \`review.md\` with concrete file-by-file review and skill/subagent evidence when suitable, then verify again before archive.\n- \`mewoflow check archive\` moves completed task folders to \`.mewoflow/archive/<task-id>/\`.\n- If the user asks to commit git changes, run \`mewoflow commit --message \"<summary>\"\`; never push unless explicitly requested.\n- Do not claim completion without command, critical-path, and review evidence.\n`;
 }
 
 function workflowTemplate(): string {
-  return `# MewoFlow Workflow\n\nnone -> judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> archive -> done\n`;
+  return `# MewoFlow Workflow\n\nnone -> judgment-review -> pending-task-confirmation -> research -> grill -> plan -> user-approval -> implement -> verify -> review -> verify -> archive -> done\n`;
 }
 
 function journalTemplate(): string {

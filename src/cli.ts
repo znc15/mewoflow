@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { initProject } from "./init.js";
 import { runDoctor } from "./doctor.js";
 import {
@@ -7,6 +9,7 @@ import {
   appendArchiveToJournal,
   approvePlan,
   advanceTask,
+  archiveTask,
   confirmPendingTask,
   getActiveTask,
   hasPlanApproval,
@@ -18,7 +21,7 @@ import {
   splitParentTaskFromPlan,
   type Gate,
 } from "./task.js";
-import { validateArchive, validateGrill, validatePlan, validateResearch, validateVerify } from "./validators.js";
+import { validateArchive, validateGrill, validatePlan, validateResearch, validateReview, validateVerify } from "./validators.js";
 import {
   MEWOFLOW_NOTICE_FIELD,
   handlePostToolUse,
@@ -28,7 +31,9 @@ import {
   type HookInput,
 } from "./hooks.js";
 
-const version = "0.2.12";
+const execFileAsync = promisify(execFile);
+
+const version = "0.2.13";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;
@@ -50,6 +55,11 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
   }
 
   if (command === "status") return printStatus(root);
+
+  if (command === "commit") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return commitCommand(root, args);
+  }
 
   if (command === "propose-task") {
     const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
@@ -82,7 +92,7 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
   }
 
   if (command === "check") {
-    if (!subcommand) return fail("Usage: mewoflow check <pending-task-confirmation|research|grill|plan|implement|verify|archive>");
+    if (!subcommand) return fail("Usage: mewoflow check <pending-task-confirmation|research|grill|plan|implement|verify|review|archive>");
     if (subcommand === "pending-task-confirmation") return confirmTask(root, optionValue(rest, "--session") ?? "default");
     if (subcommand === "user-approval") return approvePlanCommand(root, rest);
     return checkGate(root, subcommand as Gate);
@@ -178,8 +188,10 @@ async function checkGate(root: string, gate: Gate): Promise<number> {
         ? validateGrill((markdown = await readTaskMarkdown(root, task, "grill.md")))
         : gate === "plan"
           ? validatePlan((markdown = await readTaskMarkdown(root, task, "plan.md")), session, task)
-          : gate === "verify"
-            ? validateVerify((markdown = await readTaskMarkdown(root, task, "verify.md")), session, task)
+        : gate === "verify"
+          ? validateVerify((markdown = await readTaskMarkdown(root, task, "verify.md")), session, task)
+          : gate === "review"
+            ? validateReview((markdown = await readTaskMarkdown(root, task, "review.md")), session, task)
             : gate === "archive"
               ? validateArchive((markdown = await readTaskMarkdown(root, task, "archive.md")), task)
               : { ok: true, errors: [] };
@@ -193,13 +205,14 @@ async function checkGate(root: string, gate: Gate): Promise<number> {
     ].join("\n"));
   }
 
-  const nextGate = nextGateForCheck(gate);
+  const nextGate = nextGateForCheck(gate, task);
   if (!nextGate) return fail(`No next gate for ${gate}.`);
   if (gate === "archive" && task.taskRole === "parent" && !(await allChildTasksDone(root, task))) {
     return fail(`Parent task ${task.id} cannot be archived until all child tasks are done.`);
   }
   if (gate === "archive") await appendArchiveToJournal(root, task, markdown);
-  await advanceTask(root, task, nextGate);
+  const updatedTask = await advanceTask(root, task, nextGate);
+  if (gate === "archive") await archiveTask(root, updatedTask);
   console.log(`Gate ${gate} passed. Next gate: ${nextGate}.`);
   return 0;
 }
@@ -212,7 +225,7 @@ async function overrideGate(root: string, gate: Gate, args: string[]): Promise<n
   const reason = optionValue(args, "--reason");
   if (!reason) return fail("Override requires --reason.");
 
-  const nextGate = nextGateForCheck(gate);
+  const nextGate = nextGateForCheck(gate, task);
   if (!nextGate) return fail(`No next gate for ${gate}.`);
 
   task.overrides.push({ gate, reason, at: new Date().toISOString() });
@@ -220,6 +233,60 @@ async function overrideGate(root: string, gate: Gate, args: string[]): Promise<n
   await advanceTask(root, task, nextGate);
   console.log(`Gate ${gate} overridden. Next gate: ${nextGate}.`);
   return 0;
+}
+
+async function commitCommand(root: string, args: string[]): Promise<number> {
+  const message = optionValue(args, "--message") ?? optionValue(args, "-m");
+  const dryRun = args.includes("--dry-run");
+
+  try {
+    await git(root, ["rev-parse", "--is-inside-work-tree"]);
+    const status = (await git(root, ["status", "--porcelain"])).trim();
+    if (!status) return fail("No git changes to commit.");
+
+    const statusLines = status.split(/\r?\n/).filter(Boolean);
+    const secretPaths = statusLines.map(statusPath).filter(isLikelySecretPath);
+    if (secretPaths.length > 0) {
+      return fail(`Refusing to commit likely secret files: ${secretPaths.join(", ")}`);
+    }
+
+    const commitMessage = (message?.trim() || autoCommitMessage(statusLines)).trim();
+    if (dryRun) {
+      console.log(["MewoFlow git commit dry run.", `Message: ${commitMessage}`, "Changed files:", ...statusLines.map((line) => `- ${statusPath(line)}`)].join("\n"));
+      return 0;
+    }
+
+    await git(root, ["add", "-A"]);
+    const stagedFiles = (await git(root, ["diff", "--cached", "--name-only"])).trim();
+    if (!stagedFiles) return fail("No staged git changes to commit after git add -A.");
+
+    const output = await git(root, ["commit", "-m", commitMessage]);
+    console.log([`MewoFlow git commit created.`, `Message: ${commitMessage}`, output.trim()].filter(Boolean).join("\n"));
+    return 0;
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function git(root: string, args: string[]): Promise<string> {
+  const { stdout, stderr } = await execFileAsync("git", args, { cwd: root });
+  return `${stdout}${stderr}`;
+}
+
+function autoCommitMessage(statusLines: string[]): string {
+  if (statusLines.some((line) => /package(?:-lock)?\.json|src\/cli\.ts|tests\/smoke\.test\.ts/i.test(statusPath(line)))) {
+    return "chore: 提交版本与工作流更新";
+  }
+  return "chore: 提交当前变更";
+}
+
+function statusPath(line: string): string {
+  const pathText = line.slice(3).trim();
+  return pathText.includes(" -> ") ? pathText.split(" -> ").at(-1)!.trim() : pathText;
+}
+
+function isLikelySecretPath(file: string): boolean {
+  return /(^|[\\/])\.env(?:\.|$)|secret|credential|private[-_]?key|\.pem$|\.key$/i.test(file);
 }
 
 async function runHook(root: string, event: string): Promise<number> {
@@ -254,8 +321,9 @@ async function readStdinJson(): Promise<unknown> {
 
 function optionValue(args: string[], name: string): string | null {
   const index = args.indexOf(name);
-  if (index === -1) return null;
-  return args[index + 1] ?? null;
+  if (index !== -1) return args[index + 1] ?? null;
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  return inline ? inline.slice(name.length + 1) : null;
 }
 
 function fail(message: string): number {
