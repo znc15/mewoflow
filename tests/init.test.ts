@@ -33,7 +33,21 @@ describe("initProject", () => {
     const hookText = await fs.readFile(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), "utf8");
     expect(hookText).not.toContain('spawnSync("npx"');
     expect(hookText).toContain("timeout: 10000");
-    expect(hookText).toContain("shell: false");
+    expect(hookText).toContain("shell: useShell");
+  });
+
+  it("uses a shell for Windows global hook fallback only", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-init-"));
+
+    await initProject(root);
+
+    const hookText = await fs.readFile(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), "utf8");
+    expect(hookText).toContain("const hasLocalDist = fs.existsSync(localDist);");
+    expect(hookText).toContain("const hasLocalBin = fs.existsSync(localBin);");
+    expect(hookText).toContain('const command = hasLocalDist ? process.execPath : hasLocalBin ? localBin : "mewoflow";');
+    expect(hookText).toContain("const commandArgs = hasLocalDist ? [localDist, ...args] : args;");
+    expect(hookText).toContain('const useShell = process.platform === "win32" && command === "mewoflow";');
+    expect(hookText).toContain("shell: useShell");
   });
 
   it("preserves user-edited rules and workflow files", async () => {

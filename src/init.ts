@@ -336,12 +336,16 @@ const localBin = process.platform === "win32"
   : path.join(projectRoot, "node_modules", ".bin", "mewoflow");
 const localDist = path.join(projectRoot, "node_modules", "mewoflow", "dist", "src", "cli.js");
 
-const command = fs.existsSync(localBin) ? localBin : fs.existsSync(localDist) ? process.execPath : "mewoflow";
-const commandArgs = fs.existsSync(localDist) && command === process.execPath ? [localDist, ...args] : args;
+const hasLocalDist = fs.existsSync(localDist);
+const hasLocalBin = fs.existsSync(localBin);
+const command = hasLocalDist ? process.execPath : hasLocalBin ? localBin : "mewoflow";
+const commandArgs = hasLocalDist ? [localDist, ...args] : args;
+// Windows npm global bins are .cmd shims; cmd.exe is needed to resolve them from PATH.
+const useShell = process.platform === "win32" && command === "mewoflow";
 const result = spawnSync(command, commandArgs, {
   cwd: projectRoot,
   stdio: "inherit",
-  shell: false,
+  shell: useShell,
   timeout: 10000,
   env: { ...process.env, npm_config_yes: "true" },
 });
