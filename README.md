@@ -36,11 +36,21 @@ mewoflow init          # 初始化项目 wiring 与 hooks
 
 向 Claude Code 提出开发任务后，MewoFlow 会按以下流程管控：
 
-```txt
-judgment-review → pending-task-confirmation → research → grill → plan → user-approval → implement → verify → review → verify → archive
+```mermaid
+flowchart LR
+    A[judgment-review] --> B[pending-task-confirmation]
+    B --> C[research]
+    C --> D[grill]
+    D --> E[plan]
+    E --> F[user-approval]
+    F --> G[implement]
+    G --> H[verify]
+    H --> I[review]
+    I --> J[verify]
+    J --> K[archive]
 ```
 
-各 gate 要求 Claude 运行显式 CLI 命令推进状态，用户确认通过自然语言或结构化问答完成。
+
 
 ## Workflow Gates
 
