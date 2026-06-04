@@ -43,5 +43,6 @@ AGENTS.local.md
 .mewoflow/runtime/*.log
 .mewoflow/
 
-# Local planning notes
+# Local planning & design notes
 docs/plans/
+docs/design/
