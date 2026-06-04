@@ -35,9 +35,9 @@
     "verify": "npm run typecheck && npm test && npm run build && npm run smoke:dist && npm run pack:dry"
   },
   "devDependencies": {
-    "@types/node": "latest",
+    "@types/node": "^18.19.130",
     "tsx": "latest",
     "typescript": "latest",
-    "vitest": "latest"
+    "vitest": "^3.2.4"
   }
 }
