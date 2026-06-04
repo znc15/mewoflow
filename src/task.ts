@@ -12,6 +12,17 @@ export type OverrideRecord = {
   at: string;
 };
 
+export type ReworkRecord = {
+  fromGate: Gate;
+  reason: string;
+  at: string;
+};
+
+export type DeferredRiskApproval = {
+  reason: string;
+  approved_at: string;
+};
+
 export type Task = {
   id: string;
   title: string;
@@ -24,6 +35,8 @@ export type Task = {
   created_at: string;
   updated_at: string;
   overrides: OverrideRecord[];
+  reworks: ReworkRecord[];
+  deferredRiskApprovals: DeferredRiskApproval[];
 };
 
 export type PendingTask = {
@@ -188,6 +201,8 @@ export async function createTask(
     created_at: iso,
     updated_at: iso,
     overrides: [],
+    reworks: [],
+    deferredRiskApprovals: [],
   };
 
   await writeJson(taskFile(root, id, "task.json"), task);
@@ -238,7 +253,34 @@ export async function saveTask(root: string, task: Task): Promise<void> {
 }
 
 export async function advanceTask(root: string, task: Task, nextGate: Gate): Promise<Task> {
-  const updated = { ...task, gate: nextGate, reviewed: task.reviewed || (task.gate === "review" && nextGate === "verify"), updated_at: new Date().toISOString() };
+  const updated = {
+    ...task,
+    gate: nextGate,
+    reviewed: nextGate === "implement" ? false : task.reviewed || (task.gate === "review" && nextGate === "verify"),
+    updated_at: new Date().toISOString(),
+  };
+  await writeJson(await taskJsonPath(root, task.id), updated);
+  return updated;
+}
+
+export async function reworkTask(root: string, task: Task, reason: string): Promise<Task> {
+  const updated: Task = {
+    ...task,
+    gate: "implement",
+    reviewed: false,
+    reworks: [...task.reworks, { fromGate: task.gate, reason, at: new Date().toISOString() }],
+    updated_at: new Date().toISOString(),
+  };
+  await writeJson(await taskJsonPath(root, task.id), updated);
+  return updated;
+}
+
+export async function approveDeferredRisk(root: string, task: Task, reason: string): Promise<Task> {
+  const updated: Task = {
+    ...task,
+    deferredRiskApprovals: [...task.deferredRiskApprovals, { reason, approved_at: new Date().toISOString() }],
+    updated_at: new Date().toISOString(),
+  };
   await writeJson(await taskJsonPath(root, task.id), updated);
   return updated;
 }
@@ -661,7 +703,25 @@ function normalizeTask(task: Partial<Task>): Task {
     created_at: task.created_at,
     updated_at: task.updated_at,
     overrides: Array.isArray(task.overrides) ? task.overrides : [],
+    reworks: Array.isArray(task.reworks) ? task.reworks.map(normalizeReworkRecord).filter((entry): entry is ReworkRecord => Boolean(entry)) : [],
+    deferredRiskApprovals: Array.isArray(task.deferredRiskApprovals)
+      ? task.deferredRiskApprovals.map(normalizeDeferredRiskApproval).filter((entry): entry is DeferredRiskApproval => Boolean(entry))
+      : [],
   };
+}
+
+function normalizeReworkRecord(value: unknown): ReworkRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Partial<ReworkRecord>;
+  if (!isGate(record.fromGate) || typeof record.reason !== "string" || typeof record.at !== "string") return null;
+  return { fromGate: record.fromGate, reason: record.reason, at: record.at };
+}
+
+function normalizeDeferredRiskApproval(value: unknown): DeferredRiskApproval | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const approval = value as Partial<DeferredRiskApproval>;
+  if (typeof approval.reason !== "string" || typeof approval.approved_at !== "string") return null;
+  return { reason: approval.reason, approved_at: approval.approved_at };
 }
 
 function normalizePendingTask(value: unknown): PendingTask | undefined {
@@ -798,7 +858,7 @@ function researchTemplate(): string {
 }
 
 function grillTemplate(): string {
-  return `# Grill\n\n## Grill Skill\n- Used: grill-me\n- Source: .claude/skills/grill-me/SKILL.md\n\n## Question Log\n\n### Q1\nQuestion:\nRecommended Answer:\nUser Answer:\nDecision:\n\n## Decision Coverage\nProduct Goal:\nMVP Scope:\nNon-goals:\nPages/Navigation:\nData Source:\nCore Interactions:\nUI/Responsive:\nError/Empty States:\nTesting/Acceptance:\nRisks:\nBudget/Timebox:\nInfra/Deployment:\nSecurity/Privacy:\nFailure Modes/Rollback:\n\n## Locked Decisions\n\n## Acceptance Criteria\n\n## Grill Completion Judgment\nStatus:\nStopped By:\nReason:\nLow-value Follow-ups:\n\n## Open Questions\n- None\n`;
+  return `# Grill\n\n## Grill Skill\n- Used skill: grill-me\n- Source: .claude/skills/grill-me/SKILL.md\n\n## Question Log\n\n### Q1\nQuestion:\nRecommended answer:\nUser answer:\nDecision:\n\n## Decision Coverage\nRecord the decision areas required by the current task and the current grill-me skill. Field names are examples, not validator rules.\n\n## Locked Decisions\n\n## Acceptance Criteria\n\n## Grill Completion Judgment\nRecord why continuing to ask questions is now low-value.\n\n## Open Questions\n- None\n`;
 }
 
 function planTemplate(): string {
@@ -810,9 +870,9 @@ function verifyTemplate(): string {
 }
 
 function reviewTemplate(): string {
-  return `# Review\n\n## Result\n- blocked\n\n## Scope\n\n## File-by-file Review\n| File | Finding | Decision |\n|---|---|---|\n\n## Architecture Impact\n\n## Security\n\n## Performance\n\n## Maintainability\n\n## Unresolved Questions\n- None\n\n## Skill / Subagent Evidence\n| Skill or Subagent | Purpose | Evidence |\n|---|---|---|\n\n## Required Follow-up Verification\n`;
+  return `# Review\n\n## Result\n- blocked\n\nAllowed final values: passed, needs-work, deferred-with-approval.\n\n## Scope\n\n## File-by-file Review\n| File | Finding | Severity | Decision |\n|---|---|---|---|\n\n## Architecture Impact\n\n## Security\n\n## Performance\n\n## Maintainability\n\n## Unresolved Questions\n- None\n\n## Skill / Subagent Evidence\n| Skill or Subagent | Purpose | Evidence |\n|---|---|---|\n\n## Required Follow-up Verification\n`;
 }
 
 function archiveTemplate(): string {
-  return `# Archive\n\n## Summary\n\n## Decisions\n\n## Verification\n\n## Review\n\n## Follow-ups\n\n## Archived Location\n.mewoflow/archive/<task-id>/\n\n## Rule Updates\n- none\n`;
+  return `# Archive\n\n## Summary\n\n## Decisions\n\n## Verification\n\n## Review\n\n## Deferred Risk Approval\n- none\n\n## Follow-ups\n\n## Archived Location\n.mewoflow/archive/<task-id>/\n\n## Rule Updates\n- none\n`;
 }

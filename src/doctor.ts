@@ -49,11 +49,11 @@ const requiredFiles = [
   ".claude/skills/grill-me/SKILL.md",
 ];
 
-const expectedHooks = {
-  UserPromptSubmit: 'node ".mewoflow/runtime/mewoflow-hook.cjs" user-prompt-submit',
-  PreToolUse: 'node ".mewoflow/runtime/mewoflow-hook.cjs" pre-tool-use',
-  PostToolUse: 'node ".mewoflow/runtime/mewoflow-hook.cjs" post-tool-use',
-  Stop: 'node ".mewoflow/runtime/mewoflow-hook.cjs" stop',
+const hookEvents = {
+  UserPromptSubmit: "user-prompt-submit",
+  PreToolUse: "pre-tool-use",
+  PostToolUse: "post-tool-use",
+  Stop: "stop",
 };
 
 export async function runDoctor(root = process.cwd(), options: DoctorOptions = {}): Promise<DoctorReport> {
@@ -82,7 +82,7 @@ function checkNodeVersion(): DoctorCheck {
 async function checkRequiredFiles(root: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   for (const file of requiredFiles) {
-    checks.push((await pathExists(path.join(root, file))) ? pass(file, "Found.") : fail(file, "Missing. Run `mewoflow init`."));
+    checks.push((await pathExists(path.join(root, file))) ? pass(file, "Found.") : fail(file, "Missing. Run `mewoflow update` or `mewoflow init`."));
   }
   return checks;
 }
@@ -90,7 +90,7 @@ async function checkRequiredFiles(root: string): Promise<DoctorCheck[]> {
 async function checkClaudeHooks(root: string): Promise<DoctorCheck> {
   const settingsFile = path.join(root, ".claude", "settings.json");
   const text = await readTextIfExists(settingsFile);
-  if (!text) return fail("Claude Code hooks", "Missing .claude/settings.json. Run `mewoflow init`.");
+  if (!text) return fail("Claude Code hooks", "Missing .claude/settings.json. Run `mewoflow update` or `mewoflow init`.");
 
   let settings: unknown;
   try {
@@ -101,13 +101,13 @@ async function checkClaudeHooks(root: string): Promise<DoctorCheck> {
   }
 
   const hooks = isRecord(settings) ? (settings as ClaudeSettings).hooks : undefined;
-  const missing = Object.entries(expectedHooks)
-    .filter(([event, command]) => !hasHookCommand(hooks, event, command))
+  const missing = Object.entries(hookEvents)
+    .filter(([event, hookEvent]) => !hasHookCommand(hooks, event, expectedHookCommand(root, hookEvent)))
     .map(([event]) => event);
 
   return missing.length === 0
     ? pass("Claude Code hooks", "All MewoFlow hook events are configured.")
-    : fail("Claude Code hooks", `Missing hook event(s): ${missing.join(", ")}. Run ` + "`mewoflow init`.");
+    : fail("Claude Code hooks", `Missing hook event(s): ${missing.join(", ")}. Run ` + "`mewoflow update` or `mewoflow init`.");
 }
 
 async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
@@ -145,11 +145,11 @@ async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
   }
 
   if (missing.length > 0) {
-    return fail("Claude Code skills", `Missing skill file(s): ${missing.join(", ")}. Run ` + "`mewoflow init`.");
+    return fail("Claude Code skills", `Missing skill file(s): ${missing.join(", ")}. Run ` + "`mewoflow update` or `mewoflow init`.");
   }
 
   if (stale.length > 0) {
-    return fail("Claude Code skills", `Outdated or custom skill file(s): ${stale.join(", ")}. Re-run ` + "`mewoflow init` or update them manually.");
+    return fail("Claude Code skills", `Outdated or custom skill file(s): ${stale.join(", ")}. Re-run ` + "`mewoflow update --force` or update them manually.");
   }
 
   return pass("Claude Code skills", "Generated /mewoflow, /mewoflow-doctor, and grill-me skills look healthy.");
@@ -158,7 +158,7 @@ async function checkClaudeSkills(root: string): Promise<DoctorCheck> {
 async function checkClaudeMemoryImport(root: string): Promise<DoctorCheck> {
   const claudeFile = path.join(root, "CLAUDE.md");
   const text = await readTextIfExists(claudeFile);
-  if (!text) return warn("Claude memory import", "CLAUDE.md is missing. Run `mewoflow init`.");
+  if (!text) return warn("Claude memory import", "CLAUDE.md is missing. Run `mewoflow update` or `mewoflow init`.");
 
   return /(^|\n)\s*@AGENTS\.md\s*(\n|$)/.test(text)
     ? pass("Claude memory import", "CLAUDE.md imports AGENTS.md.")
@@ -217,6 +217,14 @@ function hasHookCommand(hooks: unknown, event: string, expectedCommand: string):
     if (!isRecord(group) || !Array.isArray(group.hooks)) return false;
     return group.hooks.some((hook: ClaudeHook) => isRecord(hook) && hook.command === expectedCommand);
   });
+}
+
+function expectedHookCommand(root: string, event: string): string {
+  return `node "${mewoflowHookPath(root)}" ${event}`;
+}
+
+function mewoflowHookPath(root: string): string {
+  return path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs").replace(/\\/g, "/");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

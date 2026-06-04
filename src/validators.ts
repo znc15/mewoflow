@@ -35,48 +35,36 @@ export function validateResearch(text: string, session: SessionState): Validatio
 export function validateGrill(text: string): ValidationResult {
   const errors = requireIncludes(text, [
     "## Grill Skill",
-    "grill-me",
     "## Question Log",
-    "Question:",
-    "Recommended Answer:",
-    "User Answer:",
-    "Decision:",
     "## Decision Coverage",
-    "Product Goal:",
-    "MVP Scope:",
-    "Non-goals:",
-    "Pages/Navigation:",
-    "Data Source:",
-    "Core Interactions:",
-    "UI/Responsive:",
-    "Error/Empty States:",
-    "Testing/Acceptance:",
-    "Risks:",
-    "Budget/Timebox:",
-    "Infra/Deployment:",
-    "Security/Privacy:",
-    "Failure Modes/Rollback:",
     "## Locked Decisions",
     "## Acceptance Criteria",
     "## Grill Completion Judgment",
-    "Status:",
-    "Stopped By:",
-    "Reason:",
-    "Low-value Follow-ups:",
   ]);
 
-  if (!/## Grill Skill[\s\S]*?Used:\s*grill-me/i.test(text)) {
+  const grillSkillSection = sectionContent(text, "Grill Skill");
+  if (!/\bgrill-me\b/i.test(grillSkillSection) || !hasMeaningfulSectionContent(text, "Grill Skill")) {
     errors.push("Grill must record direct use of the project-local grill-me skill.");
   }
 
-  for (const field of requiredGrillLineFields()) {
-    if (!hasNonEmptyLineField(text, field)) {
-      errors.push(`Grill requires non-empty ${field}.`);
-    }
+  if (!hasMeaningfulSectionContent(text, "Question Log", 4)) {
+    errors.push("Grill requires a concrete multi-line question log with interview and decision evidence.");
   }
 
-  if (!/^Stopped By:\s*(model|assistant|大模型|模型)\b/im.test(text)) {
-    errors.push("Grill completion judgment must say it was stopped by model/assistant judgment.");
+  if (!hasMeaningfulSectionContent(text, "Decision Coverage", 3)) {
+    errors.push("Grill requires concrete decision coverage evidence.");
+  }
+
+  if (!hasMeaningfulSectionContent(text, "Locked Decisions")) {
+    errors.push("Grill requires non-empty locked decisions evidence.");
+  }
+
+  if (!hasMeaningfulSectionContent(text, "Acceptance Criteria")) {
+    errors.push("Grill requires non-empty acceptance criteria evidence.");
+  }
+
+  if (!hasMeaningfulSectionContent(text, "Grill Completion Judgment", 2)) {
+    errors.push("Grill requires a concrete completion judgment with stop rationale.");
   }
 
   return toResult(errors);
@@ -114,12 +102,14 @@ export function validatePlan(text: string, session?: SessionState, task?: Task):
 
 export function validateVerify(text: string, session?: SessionState, task?: Task): ValidationResult {
   const errors = requireSections(text, ["## Result", "## Commands Run", "## Critical Path", "## Review"]);
-  if (!/## Result[\s\S]*?-\s*passed/i.test(text)) {
+  const resultPassed = resultValue(text, "Result") === "passed";
+  if (!resultPassed) {
     errors.push("Verify result must be passed.");
   }
 
   const commandsSection = sectionContent(text, "Commands Run");
-  if (!hasNonPlaceholderTableRow(commandsSection, ["command"])) {
+  const hasCommandEvidenceRow = hasNonPlaceholderTableRow(commandsSection, ["command"]);
+  if (!hasCommandEvidenceRow) {
     errors.push("Verify requires at least one non-placeholder command evidence row.");
   }
 
@@ -132,7 +122,7 @@ export function validateVerify(text: string, session?: SessionState, task?: Task
     errors.push("Verify evidence must cite concrete command output or critical-path observations, not generic claims.");
   }
 
-  if (session && task && !hasMatchingCommandEvidence(commandsSection, session, task)) {
+  if (resultPassed && hasCommandEvidenceRow && session && task && !hasMatchingCommandEvidence(commandsSection, session, task)) {
     errors.push("Verify requires a logged command from this task/session to match Commands Run.");
   }
 
@@ -153,8 +143,13 @@ export function validateReview(text: string, session?: SessionState, task?: Task
     "## Required Follow-up Verification",
   ]);
 
-  if (!/## Result[\s\S]*?-\s*passed/i.test(text)) {
+  const reviewResult = resultValue(text, "Result");
+  if (!reviewResult || !["passed", "needs-work", "deferred-with-approval"].includes(reviewResult)) {
     errors.push("Review result must be passed.");
+  }
+
+  if (hasUnresolvedHighSeverityFinding(text) && reviewResult === "passed") {
+    errors.push("Review has unresolved high-severity findings; use Result: needs-work and run `mewoflow rework --reason \"...\"`, or record explicit deferred-risk approval.");
   }
 
   if (!hasNonPlaceholderTableRow(sectionContent(text, "File-by-file Review"), ["file"])) {
@@ -183,6 +178,9 @@ export function validateArchive(text: string, task: Task): ValidationResult {
   if (task.overrides.length > 0 && !/override|风险|risk/i.test(text)) {
     errors.push("Archive must mention override risk when overrides exist.");
   }
+  if (hasUnresolvedHighSeverityFinding(text) && task.deferredRiskApprovals.length === 0) {
+    errors.push("Archive cannot proceed with unresolved high-severity findings unless `mewoflow approve-deferred-risk --reason \"...\"` was recorded.");
+  }
   return toResult(errors);
 }
 
@@ -194,38 +192,37 @@ function requireIncludes(text: string, values: string[]): string[] {
   return values.filter((value) => !text.includes(value)).map((value) => `Missing ${value}`);
 }
 
-function requiredGrillLineFields(): string[] {
-  return [
-    "Product Goal",
-    "MVP Scope",
-    "Non-goals",
-    "Pages/Navigation",
-    "Data Source",
-    "Core Interactions",
-    "UI/Responsive",
-    "Error/Empty States",
-    "Testing/Acceptance",
-    "Risks",
-    "Budget/Timebox",
-    "Infra/Deployment",
-    "Security/Privacy",
-    "Failure Modes/Rollback",
-    "Status",
-    "Stopped By",
-    "Reason",
-    "Low-value Follow-ups",
-  ];
-}
-
-function hasNonEmptyLineField(text: string, field: string): boolean {
-  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped}:[^\\S\\r\\n]*\\S+`, "im").test(text);
-}
-
 function sectionContent(text: string, section: string): string {
   const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`(?:^|\\r?\\n)##\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s+|$)`, "i").exec(text);
   return match?.[1] ?? "";
+}
+
+function hasMeaningfulSectionContent(text: string, section: string, minLines = 1): boolean {
+  return meaningfulEvidenceLines(sectionContent(text, section)).length >= minLines;
+}
+
+function meaningfulEvidenceLines(section: string): string[] {
+  const lines = section.split(/\r?\n/);
+  return lines.filter((line, index) => isMeaningfulEvidenceLine(line, lines[index + 1]));
+}
+
+function isMeaningfulEvidenceLine(line: string, nextLine?: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^\|?\s*:?-{3,}/.test(trimmed) || trimmed.includes("---")) return false;
+  if (trimmed.startsWith("|") && nextLine && /^\|?\s*:?-{3,}/.test(nextLine.trim())) return false;
+
+  const normalized = trimmed
+    .replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)?/, "")
+    .replace(/\*\*/g, "")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return false;
+  if (/^[^:：]{1,80}[:：]\s*$/.test(normalized)) return false;
+  if (/^(?:tbd|todo|none|n\/a|placeholder|example|sample|待定|暂无|无|示例|占位)$/i.test(normalized)) return false;
+  return /[\p{L}\p{N}]/u.test(normalized);
 }
 
 function hasNonPlaceholderTableRow(section: string, headerWords: string[]): boolean {
@@ -274,16 +271,42 @@ function hasReviewStageSkillEvidence(session: SessionState, task: Task): boolean
   });
 }
 
+function resultValue(text: string, section: string): string | null {
+  const content = sectionContent(text, section);
+  const match = /(?:^|\r?\n)\s*(?:[-*]\s*)?(?:result\s*:\s*)?(passed|needs-work|deferred-with-approval)\b/i.exec(content);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function hasUnresolvedHighSeverityFinding(text: string): boolean {
+  return text.split(/\r?\n/).some((line) => {
+    if (!line.trim().startsWith("|")) return false;
+    if (!isNonPlaceholderTableRow(line, ["file"])) return false;
+
+    const row = normalizeCellText(line);
+    const hasHighSeverity = /\b(?:high|critical|blocker)\b|高|严重|阻塞/i.test(row);
+    if (!hasHighSeverity) return false;
+
+    const markedResolved = /\b(?:fixed|resolved|done|keep|accepted)\b|已修复|已解决|无需处理|接受/i.test(row);
+    const markedUnresolved = /\b(?:unresolved|needs?\s+fix|todo|deferred|pending|open|follow[- ]?up|known\s+issue)\b|待修|未修复|未解决|待处理|延期|遗留/i.test(row);
+    return markedUnresolved && !markedResolved;
+  });
+}
+
 function hasMatchingCommandEvidence(commandsSection: string, session: SessionState, task: Task): boolean {
-  const commandRows = commandsSection
+  const commandCells = commandsSection
     .split(/\r?\n/)
-    .filter((line) => isNonPlaceholderTableRow(line, ["command"]));
-  if (commandRows.length === 0) return false;
+    .filter((line) => isNonPlaceholderTableRow(line, ["command"]))
+    .map((row) => normalizeCommand(firstTableCell(row)))
+    .filter(Boolean);
+  if (commandCells.length === 0) return false;
 
   const commands = session.commands.filter((entry) => (!entry.taskId || entry.taskId === task.id) && (!entry.gate || entry.gate === "verify"));
   if (commands.length === 0) return false;
 
-  return commands.some((entry) => commandRows.some((row) => row.includes(entry.command) || entry.command.includes(firstTableCell(row))));
+  return commands.some((entry) => {
+    const logged = normalizeCommand(entry.command);
+    return commandCells.some((cell) => logged === cell || logged.includes(cell) || cell.includes(logged));
+  });
 }
 
 function firstTableCell(row: string): string {
@@ -291,6 +314,21 @@ function firstTableCell(row: string): string {
     .split("|")
     .map((cell) => cell.trim())
     .filter(Boolean)[0] ?? "";
+}
+
+function normalizeCellText(text: string): string {
+  return text
+    .replace(/`/g, "")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCommand(command: string): string {
+  return command
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toResult(errors: string[]): ValidationResult {

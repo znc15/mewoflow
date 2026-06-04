@@ -56,6 +56,6 @@ describe("mewoflow doctor", () => {
     expect(report.text).toContain("FAIL .mewoflow/rules.md");
     expect(report.text).toContain("FAIL .claude/skills/mewoflow/SKILL.md");
     expect(report.text).toContain("FAIL .claude/skills/grill-me/SKILL.md");
-    expect(report.text).toContain("Run `mewoflow init`");
+    expect(report.text).toContain("Run `mewoflow update` or `mewoflow init`");
   });
 });

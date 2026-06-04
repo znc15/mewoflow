@@ -161,6 +161,10 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
     return allowPreToolUse();
   }
 
+  if (isControlledMaintenanceCommand(command)) {
+    return allowPreToolUse();
+  }
+
   if (isControlledJudgmentCommand(command)) {
     return allowPreToolUse();
   }
@@ -457,7 +461,7 @@ function nextActionForGate(task: Task): string {
     return `Next action: complete ${base}/research.md with Tool Evidence from WebSearch/WebFetch/MCP/skill or user-provided-source evidence, then run \`mewoflow check research\`; after that, directly use the project-local grill-me skill before plan or implementation.`;
   }
   if (task.gate === "grill") {
-    return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time, cover product details and testing/acceptance, record Recommended Answer, User Answer, Decision, Decision Coverage, and why model judgment says no meaningful questions remain in ${base}/grill.md; then run \`mewoflow check grill\`.`;
+    return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time and record concrete question-log, decision-coverage, locked-decision, acceptance-criteria, and stop-rationale evidence in ${base}/grill.md; field labels are not fixed. Then run \`mewoflow check grill\`.`;
   }
   if (task.gate === "plan") {
     return `Next action: before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan, record Shortcut / Existing Solution Scan, MVP Slice, phases, risks, and parent/child breakdown when applicable; then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
@@ -471,10 +475,10 @@ function nextActionForGate(task: Task): string {
       : `Next action: record initial verification evidence in ${base}/verify.md, then run \`mewoflow check verify\` to advance to code review.`;
   }
   if (task.gate === "review") {
-    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, record findings in ${base}/review.md, then run \`mewoflow check review\`; after review, verify again before archive.`;
+    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, and record findings in ${base}/review.md. If high/blocker findings need code changes, set Result: needs-work and run \`mewoflow rework --reason "review found ..."\` instead of editing during review. If findings are resolved or explicitly deferred with approval, run \`mewoflow check review\`; after review, verify again before archive.`;
   }
   if (task.gate === "archive") {
-    return `Next action: summarize decisions, verification, review, and follow-ups in ${base}/archive.md, then run \`mewoflow check archive\`; the task directory will move to .mewoflow/archive/${task.id}/.`;
+    return `Next action: summarize decisions, verification, review, deferred-risk approval, and follow-ups in ${base}/archive.md, then run \`mewoflow check archive\`. Unresolved high/blocker findings require \`mewoflow approve-deferred-risk --reason "..."\` before archive; the task directory will move to .mewoflow/archive/${task.id}/.`;
   }
   return "Next action: start a new MewoFlow task before more implementation work.";
 }
@@ -558,7 +562,12 @@ function isControlledMewoFlowCommand(command: string): boolean {
   const approveArgs = String.raw`(?:(?:\s+--session\s+${quoted})|(?:\s+--prompt\s+${quoted}))*`;
   const approve = String.raw`approve-plan${approveArgs}`;
   const split = String.raw`split-task\s+--from-plan${sessionArg}`;
-  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split})${redirect}$`, "i").test(trimmed);
+  const sessionOption = String.raw`\s+--session\s+${quoted}`;
+  const reasonArg = String.raw`\s+--reason\s+${quoted}`;
+  const reviewStateArgs = String.raw`(?:${sessionOption})*${reasonArg}(?:${sessionOption})*`;
+  const rework = String.raw`rework${reviewStateArgs}`;
+  const deferredRisk = String.raw`approve-deferred-risk${reviewStateArgs}`;
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split}|${rework}|${deferredRisk})${redirect}$`, "i").test(trimmed);
 }
 
 function isControlledJudgmentCommand(command: string): boolean {
@@ -584,9 +593,18 @@ function isControlledGitCommitCommand(command: string): boolean {
   return new RegExp(`^${cdPrefix}${mewoflow}\\s+commit(?:\\s+${arg})*${redirect}$`, "i").test(trimmed);
 }
 
+function isControlledMaintenanceCommand(command: string): boolean {
+  const trimmed = command.trim();
+  const cdPrefix = String.raw`(?:cd\s+(?:"[^"]+"|'[^']+'|[^&;]+)\s*(?:&&|;)\s*)?`;
+  const mewoflow = String.raw`(?:npx\s+)?mewoflow`;
+  const redirect = String.raw`(?:\s+2>&1)?`;
+  const updateArg = String.raw`(?:--dry-run|--force|-f)`;
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+update(?:\\s+${updateArg})*${redirect}$`, "i").test(trimmed);
+}
+
 function isMetaPrompt(prompt: string): boolean {
   const trimmed = prompt.trim();
-  return /^\/mewoflow(?:-[a-z0-9-]+)?\b/i.test(trimmed) || /^mewoflow\s+(doctor|status|help|version|init|check|hook)\b/i.test(trimmed);
+  return /^\/mewoflow(?:-[a-z0-9-]+)?\b/i.test(trimmed) || /^mewoflow\s+(doctor|status|help|version|init|update|check|hook|rework|approve-deferred-risk)\b/i.test(trimmed);
 }
 
 function hasShellWriteRedirection(command: string): boolean {

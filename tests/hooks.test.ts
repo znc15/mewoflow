@@ -357,6 +357,57 @@ describe("hooks", () => {
     expect(JSON.stringify(allowedCommit)).not.toContain("deny");
   });
 
+  it("allows controlled update maintenance commands during pending judgment", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
+
+    const allowedUpdate = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow update --dry-run" },
+    });
+    expect(JSON.stringify(allowedUpdate)).not.toContain("deny");
+
+    const blockedChainedUpdate = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow update && pnpm install" },
+    });
+    expect(JSON.stringify(blockedChainedUpdate)).toContain("deny");
+  });
+
+  it("allows controlled rework and deferred-risk commands without allowing chained work", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const task = await createConfirmedTask(root);
+
+    task.gate = "review";
+    await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+
+    const allowedRework = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow rework --reason \"review found high severity issue\" --session s1" },
+    });
+    expect(JSON.stringify(allowedRework)).not.toContain("deny");
+
+    const blockedChainedRework = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow rework --reason \"review found issue\" --session s1 && pnpm install" },
+    });
+    expect(JSON.stringify(blockedChainedRework)).toContain("deny");
+
+    task.gate = "archive";
+    await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+
+    const allowedDeferredRisk = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npx mewoflow approve-deferred-risk --reason \"user accepted known risk\" --session s1" },
+    });
+    expect(JSON.stringify(allowedDeferredRisk)).not.toContain("deny");
+  });
+
   it("records search and file reads", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await handlePostToolUse(root, { session_id: "s1", tool_name: "WebSearch", tool_input: {} });

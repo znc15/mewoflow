@@ -2,12 +2,13 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { initProject } from "./init.js";
+import { initProject, updateProject, type UpdateResult } from "./init.js";
 import { runDoctor } from "./doctor.js";
 import {
   acceptPendingJudgment,
   allChildTasksDone,
   appendArchiveToJournal,
+  approveDeferredRisk,
   approvePlan,
   advanceTask,
   archiveTask,
@@ -20,6 +21,7 @@ import {
   proposePendingTask,
   readTaskMarkdown,
   rejectPendingJudgment,
+  reworkTask,
   saveTask,
   splitParentTaskFromPlan,
   type Gate,
@@ -36,7 +38,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const version = "0.2.13";
+const version = "0.2.17";
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;
@@ -54,6 +56,16 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
   if (command === "init") {
     await initProject(root);
     console.log("MewoFlow initialized.");
+    return 0;
+  }
+
+  if (command === "update") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    const result = await updateProject(root, {
+      dryRun: args.includes("--dry-run"),
+      force: args.includes("--force") || args.includes("-f"),
+    });
+    console.log(formatUpdateResult(result));
     return 0;
   }
 
@@ -94,6 +106,16 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
     return approvePlanCommand(root, args);
   }
 
+  if (command === "rework") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return reworkCommand(root, args);
+  }
+
+  if (command === "approve-deferred-risk") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return approveDeferredRiskCommand(root, args);
+  }
+
   if (command === "split-task") {
     const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
     return splitTaskCommand(root, args);
@@ -113,7 +135,7 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
     if (!subcommand) return fail("Usage: mewoflow check <pending-task-confirmation|research|grill|plan|implement|verify|review|archive>");
     if (subcommand === "pending-task-confirmation") return confirmTask(root, optionValue(rest, "--session") ?? "default");
     if (subcommand === "user-approval") return approvePlanCommand(root, rest);
-    return checkGate(root, subcommand as Gate);
+    return checkGate(root, subcommand as Gate, optionValue(rest, "--session") ?? "default");
   }
 
   if (command === "override") {
@@ -138,6 +160,20 @@ async function printStatus(root: string): Promise<number> {
   }
   console.log(`Task: ${task.id}\nType: ${task.type}\nRole: ${task.taskRole}\nGate: ${task.gate}`);
   return 0;
+}
+
+function formatUpdateResult(result: UpdateResult): string {
+  const lines = [
+    result.dryRun ? "MewoFlow update dry run." : "MewoFlow update complete.",
+    result.force ? "Mode: force overwrite generated templates." : "Mode: preserve local template edits; refresh managed wiring.",
+    "Actions:",
+  ];
+
+  for (const action of result.actions) {
+    lines.push(`- ${action.action} ${action.file}: ${action.reason}`);
+  }
+
+  return lines.join("\n");
 }
 
 async function acceptJudgmentCommand(root: string, sessionId: string): Promise<number> {
@@ -219,6 +255,46 @@ async function approvePlanCommand(root: string, args: string[]): Promise<number>
   return 0;
 }
 
+async function reworkCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const reason = optionValue(args, "--reason")?.trim();
+  if (!reason) return fail("Usage: mewoflow rework --reason \"...\" [--session <id>]");
+
+  const task = await getActiveTask(root, sessionId);
+  if (!task) return fail("No active MewoFlow task.");
+  if (!isReworkAllowedGate(task.gate)) {
+    return fail(`Current gate is ${task.gate}; rework is only allowed from review, verify, or archive.`);
+  }
+
+  const updated = await reworkTask(root, task, reason);
+  console.log(["Task sent back to implement for rework.", `Task: ${updated.id}`, `From gate: ${task.gate}`, `Reason: ${reason}`].join("\n"));
+  return 0;
+}
+
+async function approveDeferredRiskCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const reason = optionValue(args, "--reason")?.trim();
+  if (!reason) return fail("Usage: mewoflow approve-deferred-risk --reason \"...\" [--session <id>]");
+
+  const task = await getActiveTask(root, sessionId);
+  if (!task) return fail("No active MewoFlow task.");
+  if (!isDeferredRiskAllowedGate(task.gate)) {
+    return fail(`Current gate is ${task.gate}; deferred risk approval is only allowed after review, verify, or archive evidence exists.`);
+  }
+
+  const updated = await approveDeferredRisk(root, task, reason);
+  console.log(["Deferred risk approved.", `Task: ${updated.id}`, `Reason: ${reason}`].join("\n"));
+  return 0;
+}
+
+function isReworkAllowedGate(gate: Gate): boolean {
+  return gate === "review" || gate === "verify" || gate === "archive";
+}
+
+function isDeferredRiskAllowedGate(gate: Gate): boolean {
+  return gate === "review" || gate === "verify" || gate === "archive";
+}
+
 async function splitTaskCommand(root: string, args: string[]): Promise<number> {
   if (!args.includes("--from-plan")) return fail("Usage: mewoflow split-task --from-plan [--session <id>]");
   const sessionId = optionValue(args, "--session") ?? "default";
@@ -231,12 +307,12 @@ async function splitTaskCommand(root: string, args: string[]): Promise<number> {
   }
 }
 
-async function checkGate(root: string, gate: Gate): Promise<number> {
-  const task = await getActiveTask(root);
+async function checkGate(root: string, gate: Gate, sessionId = "default"): Promise<number> {
+  const task = await getActiveTask(root, sessionId);
   if (!task) return fail("No active MewoFlow task.");
   if (task.gate !== gate) return fail(`Current gate is ${task.gate}, not ${gate}.`);
 
-  const session = await loadSession(root);
+  const session = await loadSession(root, sessionId);
   let markdown = "";
   const validation =
     gate === "research"

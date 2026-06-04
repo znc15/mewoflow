@@ -365,25 +365,16 @@ function validGrillMarkdown(): string {
 
 ### Q1
 Question: What should the MVP include?
-Recommended Answer: Keep playback, search, playlist, responsive UI, and sample data.
-User Answer: Yes.
+Analysis: Keep playback, search, playlist, responsive UI, and sample data.
+Source / Answer: User agreed.
 Decision: Exclude backend and auth.
 
 ## Decision Coverage
-Product Goal: Build a music website MVP for browsing and playback demos.
-MVP Scope: Player controls, search, playlist, responsive dark UI.
-Non-goals: Backend auth, payments, and streaming provider integration.
-Pages/Navigation: Home, search, playlist, and profile placeholders.
-Data Source: Local sample JSON and bundled sample audio.
-Core Interactions: Play, pause, seek, volume, playlist selection, and search filtering.
-UI/Responsive: Mobile-first dark layout with desktop two-column player view.
-Error/Empty States: Empty search result, missing audio, and no playlist states.
-Testing/Acceptance: Build passes, controls update state, search filters data, responsive smoke checks pass.
-Risks: Browser autoplay rules and MVP scope creep.
-Budget/Timebox: Keep implementation to the smallest frontend MVP slice.
-Infra/Deployment: Static frontend deployment without external services.
-Security/Privacy: No accounts, auth, or private user data in MVP.
-Failure Modes/Rollback: Disable broken audio entries and fall back to sample data.
+- 用户价值: Build a music website browsing and playback demo.
+- 首版边界: Player controls, search, playlist, responsive dark UI; backend auth and streaming provider integration wait.
+- 页面与数据: Home, search, playlist, profile placeholders with local sample JSON and bundled sample audio.
+- 交互与状态: Play, pause, seek, volume, playlist selection, search filtering, empty results, and missing audio states.
+- 验收与降级: Build passes, controls update state, search filters data, responsive smoke checks pass, and broken audio entries are disabled.
 
 ## Locked Decisions
 - Use frontend-only sample data.
@@ -393,8 +384,7 @@ Failure Modes/Rollback: Disable broken audio entries and fall back to sample dat
 
 ## Grill Completion Judgment
 Status: complete
-Stopped By: assistant
-Reason: Product, scope, navigation, data, interaction, UI, edge state, and testing decisions are covered.
+停止依据: Further questions are low-value because navigation, data, interaction, UI, edge state, and testing decisions are covered.
 Low-value Follow-ups: Exact copy and icon choices can be adjusted during implementation.
 
 ## Open Questions
