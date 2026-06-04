@@ -3,6 +3,10 @@
   "version": "0.2.19",
   "description": "Local Claude Code workflow gates for research, grill, planning, implementation, verification, and archive.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/znc15/mewoflow.git"
+  },
   "type": "module",
   "bin": {
     "mewoflow": "dist/src/cli.js"
