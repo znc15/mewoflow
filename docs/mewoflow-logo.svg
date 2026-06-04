@@ -1,0 +1,53 @@
+<svg width="720" height="180" viewBox="0 0 720 180" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <!-- 文字渐变：淡蓝 → 淡粉 -->
+    <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7EC8E3"/>
+      <stop offset="35%" stop-color="#A8D8EA"/>
+      <stop offset="65%" stop-color="#FFB5C2"/>
+      <stop offset="100%" stop-color="#FF9CB0"/>
+    </linearGradient>
+
+    <!-- 文字光晕滤镜 -->
+    <filter id="glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- 投影 -->
+    <filter id="shadow" x="-5%" y="-5%" width="115%" height="130%">
+      <feDropShadow dx="1" dy="3" stdDeviation="3" flood-color="#7EC8E3" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- 背景装饰圆点 -->
+  <circle cx="80" cy="40" r="2.5" fill="#C8E8F8" opacity="0.6"/>
+  <circle cx="160" cy="28" r="1.8" fill="#FFD1DC" opacity="0.5"/>
+  <circle cx="620" cy="35" r="2.2" fill="#C8E8F8" opacity="0.6"/>
+  <circle cx="680" cy="50" r="3" fill="#FFD1DC" opacity="0.5"/>
+  <circle cx="590" cy="140" r="2" fill="#C8E8F8" opacity="0.5"/>
+  <circle cx="400" cy="20" r="1.5" fill="#A8D8EA" opacity="0.4"/>
+
+  <!-- 装饰星星 -->
+  <path d="M640 18 L641.5 22 L646 22.5 L641.5 23 L640 27 L638.5 23 L634 22.5 L638.5 22 Z" fill="#FFB5C2" opacity="0.5"/>
+  <path d="M98 18 L99.2 21 L102 21.5 L99.2 22 L98 25 L96.8 22 L94 21.5 L96.8 21 Z" fill="#7EC8E3" opacity="0.5"/>
+
+  <!-- ============ 文字 ============ -->
+  <g filter="url(#shadow)">
+    <text x="365" y="100" dominant-baseline="central" text-anchor="middle"
+          font-family="Georgia, 'Times New Roman', 'Noto Serif SC', serif"
+          font-size="64" font-weight="700" font-style="italic"
+          letter-spacing="0.04em"
+          fill="url(#textGrad)" filter="url(#glow)">MewoFlow</text>
+  </g>
+
+  <!-- 底部装饰线 -->
+  <line x1="160" y1="138" x2="560" y2="138" stroke="url(#textGrad)" stroke-width="1.8" stroke-linecap="round" opacity="0.35"/>
+  <circle cx="160" cy="138" r="3" fill="#7EC8E3" opacity="0.5"/>
+  <circle cx="560" cy="138" r="3" fill="#FF9CB0" opacity="0.5"/>
+
+</svg>
