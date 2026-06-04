@@ -306,6 +306,8 @@ export async function loadSession(root: string, sessionId = "default"): Promise<
     const session = await readJson<Partial<SessionState>>(file);
     return normalizeSessionState(session);
   } catch {
+    const corruptFile = `${file}.corrupt-${Date.now()}`;
+    await fs.rename(file, corruptFile).catch(() => undefined);
     const session = emptySessionState();
     await writeJson(file, session);
     return session;
@@ -314,6 +316,12 @@ export async function loadSession(root: string, sessionId = "default"): Promise<
 
 export async function saveSession(root: string, sessionId: string, session: SessionState): Promise<void> {
   await writeJson(sessionFile(root, sessionId), session);
+}
+
+export async function loadSessionWithDefault(root: string, sessionId = "default"): Promise<SessionState> {
+  const session = await loadSession(root, sessionId);
+  if (sessionId === "default") return session;
+  return mergeSessionStates(await loadSession(root, "default"), session);
 }
 
 export async function setActiveTask(root: string, taskId: string, sessionId = "default"): Promise<void> {
@@ -441,6 +449,7 @@ export async function getActiveTaskId(root: string, sessionId = "default"): Prom
   if (sessionId !== "default") {
     const defaultSession = await loadSession(root, "default");
     if (defaultSession.activeTaskId) return defaultSession.activeTaskId;
+    return null;
   }
   return latestTaskId(root);
 }
@@ -574,11 +583,13 @@ export function requiredImplementationReads(task: Task): string[] {
 }
 
 export function normalizePath(file: string, root?: string): string {
-  let normalized = file.replace(/\\/g, "/").replace(/^\.\//, "");
+  let normalized = file.trim().replace(/\\/g, "/").replace(/^\.\//, "");
   if (root) {
     const normalizedRoot = path.resolve(root).replace(/\\/g, "/");
-    if (normalized === normalizedRoot) return ".";
-    if (normalized.startsWith(`${normalizedRoot}/`)) {
+    const normalizedCompare = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+    const rootCompare = process.platform === "win32" ? normalizedRoot.toLowerCase() : normalizedRoot;
+    if (normalizedCompare === rootCompare) return ".";
+    if (normalizedCompare.startsWith(`${rootCompare}/`)) {
       normalized = normalized.slice(normalizedRoot.length + 1);
     }
   }
@@ -610,11 +621,28 @@ async function updateSession(
   sessionId: string,
   updater: (session: SessionState) => SessionState,
 ): Promise<void> {
-  const session = updater(await loadSession(root, sessionId));
-  await saveSession(root, sessionId, session);
+  await updateSingleSession(root, sessionId, updater);
   if (sessionId !== "default") {
-    const defaultSession = updater(await loadSession(root, "default"));
-    await saveSession(root, "default", defaultSession);
+    await updateSingleSession(root, "default", updater);
+  }
+}
+
+const sessionUpdateQueues = new Map<string, Promise<void>>();
+
+async function updateSingleSession(root: string, sessionId: string, updater: (session: SessionState) => SessionState): Promise<void> {
+  const key = sessionFile(root, sessionId);
+  const previous = sessionUpdateQueues.get(key) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const session = updater(await loadSession(root, sessionId));
+      await saveSession(root, sessionId, session);
+    });
+  sessionUpdateQueues.set(key, next);
+  try {
+    await next;
+  } finally {
+    if (sessionUpdateQueues.get(key) === next) sessionUpdateQueues.delete(key);
   }
 }
 
@@ -626,16 +654,24 @@ async function findPendingTask(root: string, sessionId: string): Promise<Pending
     const defaultSession = await loadSession(root, "default");
     if (defaultSession.pendingTask) return defaultSession.pendingTask;
   }
-
-  const sessionsDir = path.dirname(sessionFile(root, "default"));
-  if (!(await pathExists(sessionsDir))) return null;
-  const entries = await fs.readdir(sessionsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const candidate = await loadSession(root, path.basename(entry.name, ".json"));
-    if (candidate.pendingTask) return candidate.pendingTask;
-  }
   return null;
+}
+
+function mergeSessionStates(primary: SessionState, secondary: SessionState): SessionState {
+  return {
+    activeTaskId: secondary.activeTaskId ?? primary.activeTaskId,
+    pendingJudgment: secondary.pendingJudgment ?? primary.pendingJudgment,
+    pendingTask: secondary.pendingTask ?? primary.pendingTask,
+    planApprovals: { ...primary.planApprovals, ...secondary.planApprovals },
+    readFiles: uniqueStrings([...primary.readFiles, ...secondary.readFiles]),
+    searchTools: [...primary.searchTools, ...secondary.searchTools],
+    skillUses: [...primary.skillUses, ...secondary.skillUses],
+    commands: [...primary.commands, ...secondary.commands],
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 async function setActiveTaskForMatchingPendingSessions(root: string, pendingTaskId: string, taskId: string): Promise<void> {

@@ -30,6 +30,10 @@ describe("initProject", () => {
     await expect(fs.readFile(path.join(root, "CLAUDE.md"), "utf8")).resolves.toContain("@AGENTS.md");
     await expect(fs.readFile(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), "utf8")).resolves.toContain("npx mewoflow doctor");
     await expect(fs.readFile(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"), "utf8")).resolves.toContain("Interview me relentlessly");
+    const hookText = await fs.readFile(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), "utf8");
+    expect(hookText).not.toContain('spawnSync("npx"');
+    expect(hookText).toContain("timeout: 10000");
+    expect(hookText).toContain("shell: false");
   });
 
   it("preserves user-edited rules and workflow files", async () => {

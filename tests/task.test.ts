@@ -8,9 +8,12 @@ import {
   archivedTaskDir,
   createPendingTask,
   createTask,
+  getActiveTask,
   loadSession,
   loadTask,
   proposePendingTask,
+  recordReadFile,
+  saveSession,
   setPendingTask,
   taskFile,
 } from "../src/task.js";
@@ -75,5 +78,44 @@ describe("task store", () => {
     const session = await loadSession(root, "s1");
     expect(session.activeTaskId).toBe("2026-06-01-video-platform");
     expect(session.pendingTask).toBeUndefined();
+  });
+
+  it("does not confirm stale pending tasks from unrelated sessions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-task-"));
+    const stale = await createPendingTask(root, {
+      title: "旧会话任务",
+      type: "standard",
+      prompt: "旧会话任务",
+      now: new Date("2026-06-02T08:00:00.000Z"),
+    });
+    await saveSession(root, "other-session", {
+      pendingTask: { ...stale, proposedTitle: "旧会话任务", proposedSlug: "stale-session-task" },
+      planApprovals: {},
+      readFiles: [],
+      searchTools: [],
+      skillUses: [],
+      commands: [],
+    });
+
+    await expect(confirmPendingTask(root, "s1")).resolves.toBeNull();
+  });
+
+  it("does not treat latest task as active for unrelated non-default sessions", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-task-"));
+    await createTask(root, { title: "孤立任务", type: "standard" });
+
+    await expect(getActiveTask(root, "s1")).resolves.toBeNull();
+  });
+
+  it("serializes concurrent session evidence updates", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-task-"));
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        recordReadFile(root, "s1", `file-${index}.md`),
+      ),
+    );
+
+    const session = await loadSession(root, "s1");
+    expect(session.readFiles).toHaveLength(10);
   });
 });

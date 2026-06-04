@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.js";
+import { writeFileEnsured } from "../src/fs.js";
 import { createTask, loadTask, saveTask } from "../src/task.js";
 
 const execFileAsync = promisify(execFile);
@@ -15,10 +16,17 @@ describe("mewoflow cli", () => {
   });
 
   it("prints version", async () => {
+    const packageJson = JSON.parse(await fs.readFile(path.join(process.cwd(), "package.json"), "utf8")) as { version: string };
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(main(["--version"])).resolves.toBe(0);
-    expect(log).toHaveBeenCalledWith("0.2.17");
+    expect(log).toHaveBeenCalledWith(packageJson.version);
     log.mockRestore();
+  });
+
+  it("includes README assets in the npm package file list", async () => {
+    const packageJson = JSON.parse(await fs.readFile(path.join(process.cwd(), "package.json"), "utf8")) as { files?: string[] };
+
+    expect(packageJson.files).toContain("docs/mewoflow-logo.svg");
   });
 
   it("previews project updates", async () => {
@@ -71,5 +79,50 @@ describe("mewoflow cli", () => {
 
     const updated = await loadTask(root, task.id);
     expect(updated.deferredRiskApprovals.at(-1)).toMatchObject({ reason: "user accepted known high severity follow-up" });
+  });
+
+  it("does not advance review when Result is needs-work", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-review-cli-"));
+    const task = await createTask(root, { title: "review needs work", type: "standard", gate: "review" });
+    await writeFileEnsured(
+      path.join(root, ".mewoflow", "tasks", task.id, "review.md"),
+      `# Review
+
+## Result
+- needs-work
+
+## Scope
+Reviewed high-risk workflow changes.
+
+## File-by-file Review
+| File | Finding | Decision |
+|---|---|---|
+| src/cli.ts | Review found a blocking workflow issue | Rework |
+
+## Architecture Impact
+Workflow gate must not advance with known needs-work findings.
+
+## Security
+No credential handling changes.
+
+## Performance
+No hot path changes.
+
+## Maintainability
+Rework keeps review evidence aligned with state transitions.
+
+## Unresolved Questions
+- None
+
+## Skill / Subagent Evidence
+No suitable skill was available for this synthetic CLI test.
+
+## Required Follow-up Verification
+Run npm test after rework.
+`,
+    );
+
+    await expect(main(["check", "review"], root)).resolves.toBe(1);
+    await expect(loadTask(root, task.id)).resolves.toMatchObject({ gate: "review" });
   });
 });

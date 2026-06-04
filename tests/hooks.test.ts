@@ -534,6 +534,15 @@ describe("hooks", () => {
     });
     expect(JSON.stringify(allowedCommand)).not.toContain("deny");
 
+    const blockedChainedCommand = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: `Set-Content .mewoflow/tasks/${task.id}/grill.md 'ok' && pnpm install` },
+    });
+    const blockedChainedText = JSON.stringify(blockedChainedCommand);
+    expect(blockedChainedText).toContain("deny");
+    expect(blockedChainedText).toContain("single safe write");
+
     const blockedTaskJson = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
@@ -567,12 +576,54 @@ describe("hooks", () => {
     });
     expect(JSON.stringify(blockedInstall)).toContain("deny");
 
+    const blockedCi = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "npm ci 2>&1" },
+    });
+    expect(JSON.stringify(blockedCi)).toContain("deny");
+
+    const blockedTouch = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "touch src/generated.ts" },
+    });
+    expect(JSON.stringify(blockedTouch)).toContain("deny");
+
     const blocked = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Bash",
       tool_input: { command: "echo ok > report.txt" },
     });
     expect(JSON.stringify(blocked)).toContain("deny");
+  });
+
+  it("accepts default-session implementation reads for a non-default hook session", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const task = await createConfirmedTask(root);
+
+    task.gate = "plan";
+    await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+    await expect(main(["approve-plan", "--prompt", "approved from default session"], root)).resolves.toBe(0);
+
+    task.gate = "implement";
+    await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+
+    for (const file of [
+      ".mewoflow/rules.md",
+      `.mewoflow/tasks/${task.id}/research.md`,
+      `.mewoflow/tasks/${task.id}/grill.md`,
+      `.mewoflow/tasks/${task.id}/plan.md`,
+    ]) {
+      await recordReadFile(root, "default", file);
+    }
+
+    const allowed = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: "src/a.ts" },
+    });
+    expect(JSON.stringify(allowed)).not.toContain("deny");
   });
 
   it("recovers from corrupted session JSON without crashing stop", async () => {
@@ -585,5 +636,7 @@ describe("hooks", () => {
 
     await expect(handleStop(root, { session_id: "s1" })).resolves.toEqual({});
     await expect(readText(file)).resolves.toContain('"readFiles": []');
+    const sessionFiles = await fs.readdir(path.dirname(file));
+    expect(sessionFiles.some((entry) => entry.startsWith("s1.json.corrupt-"))).toBe(true);
   });
 });

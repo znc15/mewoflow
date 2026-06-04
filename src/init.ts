@@ -324,7 +324,34 @@ function agentSpecTemplate(): string {
 }
 
 function hookShimTemplate(): string {
-  return `#!/usr/bin/env node\nconst path = require("node:path");\nconst { spawnSync } = require("node:child_process");\nconst projectRoot = path.resolve(__dirname, "..", "..");\nconst result = spawnSync("npx", ["mewoflow", "hook", ...process.argv.slice(2)], { cwd: projectRoot, stdio: "inherit", shell: true });\nprocess.exit(result.status ?? 1);\n`;
+  return `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+const projectRoot = path.resolve(__dirname, "..", "..");
+const args = ["hook", ...process.argv.slice(2)];
+const localBin = process.platform === "win32"
+  ? path.join(projectRoot, "node_modules", ".bin", "mewoflow.cmd")
+  : path.join(projectRoot, "node_modules", ".bin", "mewoflow");
+const localDist = path.join(projectRoot, "node_modules", "mewoflow", "dist", "src", "cli.js");
+
+const command = fs.existsSync(localBin) ? localBin : fs.existsSync(localDist) ? process.execPath : "mewoflow";
+const commandArgs = fs.existsSync(localDist) && command === process.execPath ? [localDist, ...args] : args;
+const result = spawnSync(command, commandArgs, {
+  cwd: projectRoot,
+  stdio: "inherit",
+  shell: false,
+  timeout: 10000,
+  env: { ...process.env, npm_config_yes: "true" },
+});
+
+if (result.error) {
+  console.error("MewoFlow hook failed: " + result.error.message);
+  process.exit(result.error.code === "ETIMEDOUT" ? 124 : 1);
+}
+process.exit(result.status ?? 1);
+`;
 }
 
 function entrySkillTemplate(): string {

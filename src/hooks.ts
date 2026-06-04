@@ -2,6 +2,7 @@ import {
   getActiveTask,
   hasPlanApproval,
   loadSession,
+  loadSessionWithDefault,
   normalizePath,
   recordCommand,
   recordReadFile,
@@ -170,7 +171,7 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
   }
 
   if (isControlledMewoFlowCommand(command)) {
-    const session = await loadSession(root, sessionId);
+    const session = await loadSessionWithDefault(root, sessionId);
     if (session.pendingJudgment && !session.activeTaskId) return deny(pendingJudgmentWriteReason(session.pendingJudgment));
     return allowPreToolUse();
   }
@@ -181,7 +182,7 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
 
   if (!writeAttempt) return allowPreToolUse();
 
-  const session = await loadSession(root, sessionId);
+  const session = await loadSessionWithDefault(root, sessionId);
   if (session.pendingJudgment && !session.activeTaskId) return deny(pendingJudgmentWriteReason(session.pendingJudgment));
   if (session.pendingTask && !session.activeTaskId) return deny(pendingTaskWriteReason(session.pendingTask.id));
   const task = await getActiveTask(root, sessionId);
@@ -190,8 +191,14 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
     return requiresWorkflowWithoutActiveTask(tool, command) ? deny(noActiveTaskWriteReason()) : allowPreToolUse();
   }
 
-  if (isActiveTaskEvidenceTarget(target, task) || isActiveTaskEvidenceCommand(command, task)) {
+  if (isActiveTaskEvidenceTarget(target, task)) {
     return allowPreToolUse();
+  }
+
+  if (commandReferencesActiveTaskEvidence(command, task)) {
+    return isSafeActiveTaskEvidenceCommand(command, task)
+      ? allowPreToolUse()
+      : deny("MewoFlow evidence markdown Bash writes must be a single safe write to the current task evidence file; chained commands, package installs, deletes, moves, and extra shell operations are blocked.");
   }
 
   if (isProtectedWriteCommand(command)) {
@@ -202,15 +209,7 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
     return deny(writeBlockedReason(task));
   }
 
-  let approved = hasPlanApproval(session, task.id);
-  if (!approved) {
-    const hookSessionId = input.session_id ?? "default";
-    if (hookSessionId !== "default") {
-      const defaultSession = await loadSession(root, "default");
-      approved = hasPlanApproval(defaultSession, task.id);
-    }
-  }
-  if (!approved) {
+  if (!hasPlanApproval(session, task.id)) {
     return deny(`MewoFlow task ${task.id} is at implement gate, but no explicit user plan approval is recorded. Show the plan and wait for user approval before scaffolding or editing. If plan was approved via \`mewoflow approve-plan\` without --session, the approval is in the default session.`);
   }
 
@@ -467,7 +466,7 @@ function nextActionForGate(task: Task): string {
     return `Next action: before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan, record Shortcut / Existing Solution Scan, MVP Slice, phases, risks, and parent/child breakdown when applicable; then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
   }
   if (task.gate === "implement") {
-    return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing.`;
+    return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
   }
   if (task.gate === "verify") {
     return task.reviewed
@@ -503,11 +502,7 @@ function skillName(input: HookInput): string | null {
 function isWriteAttempt(tool: string, command: string): boolean {
   if (/^(Edit|Write|MultiEdit|NotebookEdit)$/i.test(tool)) return true;
   if (tool !== "Bash") return false;
-  return (
-    /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b/i.test(command) ||
-    hasPackageManagerWriteCommand(command) ||
-    hasShellWriteRedirection(command)
-  );
+  return hasFileSystemWriteCommand(command) || hasPackageManagerWriteCommand(command) || hasShellWriteRedirection(command);
 }
 
 function requiresWorkflowWithoutActiveTask(tool: string, command: string): boolean {
@@ -542,10 +537,13 @@ function isBuildFromScratchPrompt(prompt: string): boolean {
 
 function hasPackageManagerWriteCommand(command: string): boolean {
   return (
-    /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|create|init)\b/i.test(command) ||
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|create|init|ci|update)\b/i.test(command) ||
     /\b(?:pnpm|yarn)\s+dlx\b/i.test(command) ||
     /\bnpm\s+exec\b/i.test(command) ||
-    /\bnpx\s+create[-\w./@]*\b/i.test(command)
+    /\bnpx\s+create[-\w./@]*\b/i.test(command) ||
+    /\bpip(?:3)?\s+install\b/i.test(command) ||
+    /\bcargo\s+(?:add|install)\b/i.test(command) ||
+    /\bgo\s+get\b/i.test(command)
   );
 }
 
@@ -611,17 +609,25 @@ function hasShellWriteRedirection(command: string): boolean {
   return /(^|\s)(?:\d{0,2})?>>?(?!&)/.test(command);
 }
 
+function hasFileSystemWriteCommand(command: string): boolean {
+  return (
+    /\b(rm|mv|cp|del|erase|ren|mkdir|touch|tee|new-item|ni|set-content|add-content|clear-content|out-file|remove-item|copy-item|move-item|rename-item)\b/i.test(command) ||
+    /\bgit\s+apply\b/i.test(command) ||
+    /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|mkdirSync|rmSync|renameSync|copyFileSync)\b/i.test(command)
+  );
+}
+
+function hasShellCommandChaining(command: string): boolean {
+  return /&&|\|\||[;|]/.test(command);
+}
+
 function isProtectedTarget(target: string): boolean {
   return /^\.mewoflow\/tasks\/.*\/task\.json$/.test(target) || target.startsWith(".mewoflow/runtime/");
 }
 
 function isProtectedWriteCommand(command: string): boolean {
   if (!/\.mewoflow[\\/](?:tasks|runtime)/i.test(command)) return false;
-  return (
-    /\b(rm|mv|cp|del|erase|ren|mkdir|new-item|ni|set-content|add-content|out-file)\b/i.test(command) ||
-    /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|mkdirSync|rmSync|renameSync|copyFileSync)\b/i.test(command) ||
-    hasShellWriteRedirection(command)
-  );
+  return hasFileSystemWriteCommand(command) || hasShellWriteRedirection(command);
 }
 
 function isActiveTaskEvidenceTarget(target: string, task: Task): boolean {
@@ -629,10 +635,19 @@ function isActiveTaskEvidenceTarget(target: string, task: Task): boolean {
   return evidenceMarkdownFiles().some((file) => target === `${base}${file}`);
 }
 
-function isActiveTaskEvidenceCommand(command: string, task: Task): boolean {
+function commandReferencesActiveTaskEvidence(command: string, task: Task): boolean {
   const normalized = command.replace(/\\/g, "/");
   const base = `.mewoflow/tasks/${task.id}/`;
   return evidenceMarkdownFiles().some((file) => normalized.includes(`${base}${file}`));
+}
+
+function isSafeActiveTaskEvidenceCommand(command: string, task: Task): boolean {
+  const trimmed = command.trim();
+  if (!commandReferencesActiveTaskEvidence(trimmed, task)) return false;
+  if (hasShellCommandChaining(trimmed)) return false;
+  if (hasPackageManagerWriteCommand(trimmed)) return false;
+  if (/\b(rm|mv|cp|del|erase|ren|mkdir|touch|tee|remove-item|copy-item|move-item|rename-item|git\s+apply)\b/i.test(trimmed)) return false;
+  return /^\s*(?:set-content|add-content|out-file|echo|printf)\b/i.test(trimmed);
 }
 
 function evidenceMarkdownFiles(): string[] {

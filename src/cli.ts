@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { initProject, updateProject, type UpdateResult } from "./init.js";
 import { runDoctor } from "./doctor.js";
 import {
@@ -17,6 +20,7 @@ import {
   getActiveTask,
   hasPlanApproval,
   loadSession,
+  loadSessionWithDefault,
   nextGateForCheck,
   proposePendingTask,
   readTaskMarkdown,
@@ -38,7 +42,24 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const version = "0.2.17";
+const version = packageVersion();
+
+function packageVersion(): string {
+  let current = path.dirname(fileURLToPath(import.meta.url));
+  for (let depth = 0; depth < 5; depth += 1) {
+    const candidate = path.join(current, "package.json");
+    try {
+      const parsed = JSON.parse(readFileSync(candidate, "utf8")) as { version?: unknown };
+      if (typeof parsed.version === "string") return parsed.version;
+    } catch {
+      // Keep walking up from src/ or dist/src/ until the package root is found.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return "0.0.0";
+}
 
 export async function main(argv = process.argv.slice(2), root = process.cwd()): Promise<number> {
   const [command, subcommand, ...rest] = argv;
@@ -249,7 +270,7 @@ async function approvePlanCommand(root: string, args: string[]): Promise<number>
   const prompt = optionValue(args, "--prompt") ?? "approved via mewoflow approve-plan";
   const task = await getActiveTask(root, sessionId);
   if (!task) return fail("No active MewoFlow task.");
-  if (task.gate !== "plan") return fail(`Current gate is ${task.gate}, not plan.`);
+  if (task.gate !== "plan" && task.gate !== "implement") return fail(`Current gate is ${task.gate}. Plan approval is only meaningful at the plan or implement gate (after a rework).`);
   await approvePlan(root, task.id, sessionId, prompt);
   console.log(`Plan approved. Task: ${task.id}`);
   return 0;
@@ -312,7 +333,7 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
   if (!task) return fail("No active MewoFlow task.");
   if (task.gate !== gate) return fail(`Current gate is ${task.gate}, not ${gate}.`);
 
-  const session = await loadSession(root, sessionId);
+  const session = await loadSessionWithDefault(root, sessionId);
   let markdown = "";
   const validation =
     gate === "research"
@@ -331,6 +352,10 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
 
   if (!validation.ok) return fail(validation.errors.join("\n"));
 
+  if (gate === "review" && reviewNeedsWork(markdown)) {
+    return fail("Review result is needs-work. Do not advance review; run `mewoflow rework --reason \"...\"` to return to implement, or record resolved/deferred findings before checking review again.");
+  }
+
   if (gate === "plan" && !hasPlanApproval(session, task.id)) {
     return fail([
       `Plan for task ${task.id} is valid, but explicit user approval is required before entering implement.`,
@@ -348,6 +373,11 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
   if (gate === "archive") await archiveTask(root, updatedTask);
   console.log(`Gate ${gate} passed. Next gate: ${nextGate}.`);
   return 0;
+}
+
+function reviewNeedsWork(markdown: string): boolean {
+  const match = /(?:^|\r?\n)##\s+Result\s*\r?\n([\s\S]*?)(?=\r?\n##\s+|$)/i.exec(markdown);
+  return /(?:^|\r?\n)\s*(?:[-*]\s*)?(?:result\s*:\s*)?needs-work\b/i.test(match?.[1] ?? "");
 }
 
 async function overrideGate(root: string, gate: Gate, args: string[]): Promise<number> {
@@ -423,21 +453,54 @@ function isLikelySecretPath(file: string): boolean {
 }
 
 async function runHook(root: string, event: string): Promise<number> {
-  const input = (await readStdinJson()) as HookInput;
-  const output =
-    event === "user-prompt-submit"
-      ? await handleUserPromptSubmit(root, input)
-      : event === "pre-tool-use"
-        ? await handlePreToolUse(root, input)
-        : event === "post-tool-use"
-          ? await handlePostToolUse(root, input)
-          : event === "stop"
-            ? await handleStop(root, input)
-            : {};
+  let output: Record<string, unknown>;
+  try {
+    const input = (await readStdinJson()) as HookInput;
+    output =
+      event === "user-prompt-submit"
+        ? await handleUserPromptSubmit(root, input)
+        : event === "pre-tool-use"
+          ? await handlePreToolUse(root, input)
+          : event === "post-tool-use"
+            ? await handlePostToolUse(root, input)
+            : event === "stop"
+              ? await handleStop(root, input)
+              : {};
+  } catch (error) {
+    output = safeHookFailureOutput(event, error);
+  }
   const hookOutput = stripMewoFlowNotice(output);
   if (typeof output[MEWOFLOW_NOTICE_FIELD] === "string") console.error(output[MEWOFLOW_NOTICE_FIELD]);
   if (Object.keys(hookOutput).length > 0) console.log(JSON.stringify(hookOutput));
   return 0;
+}
+
+function safeHookFailureOutput(event: string, error: unknown): Record<string, unknown> {
+  const message = error instanceof Error ? error.message : String(error);
+  const hookName = hookEventName(event);
+  const reason = `MewoFlow hook ${event || "unknown"} failed safely: ${message}`;
+  const output: Record<string, unknown> = {
+    [MEWOFLOW_NOTICE_FIELD]: "MewoFlow hook failed safely.",
+    additionalContext: reason,
+  };
+  if (hookName === "PreToolUse") {
+    output.hookSpecificOutput = {
+      hookEventName: hookName,
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    };
+  } else if (hookName) {
+    output.hookSpecificOutput = { hookEventName: hookName };
+  }
+  return output;
+}
+
+function hookEventName(event: string): "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | null {
+  if (event === "user-prompt-submit") return "UserPromptSubmit";
+  if (event === "pre-tool-use") return "PreToolUse";
+  if (event === "post-tool-use") return "PostToolUse";
+  if (event === "stop") return "Stop";
+  return null;
 }
 
 function stripMewoFlowNotice(output: Record<string, unknown>): Record<string, unknown> {

@@ -1,6 +1,6 @@
 {
   "name": "mewoflow",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "Local Claude Code workflow gates for research, grill, planning, implementation, verification, and archive.",
   "license": "MIT",
   "type": "module",
@@ -9,6 +9,7 @@
   },
   "files": [
     "dist/src/",
+    "docs/mewoflow-logo.svg",
     "README.md"
   ],
   "engines": {
@@ -28,9 +29,10 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "tsx src/cli.ts",
+    "smoke:dist": "node dist/src/cli.js --version && node dist/src/cli.js help",
     "pack:dry": "npm pack --dry-run",
     "prepack": "npm run build",
-    "verify": "npm run typecheck && npm test && npm run build && npm run pack:dry"
+    "verify": "npm run typecheck && npm test && npm run build && npm run smoke:dist && npm run pack:dry"
   },
   "devDependencies": {
     "@types/node": "latest",
