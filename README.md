@@ -53,17 +53,17 @@ flowchart TB
 
 ## Workflow Gates
 
-| Gate                        | 用途                   | 关键证据                                                                 |
-| --------------------------- | ---------------------- | ------------------------------------------------------------------------ |
-| `pending-task-confirmation` | 判断任务类型，等待用户确认 | `accept-judgment` / `reject-judgment`、`propose-task`、`confirm-task`     |
-| `research`                  | 获取最新资料和上下文     | `## Tool Evidence`（WebSearch/WebFetch/MCP/skill）                         |
-| `grill`                     | 使用 `grill-me` 追问需求 | 提问日志、决策覆盖、锁定决策、验收标准、停止理由                             |
-| `plan`                      | 编写实现计划             | 快捷/现成方案扫描、MVP 切片、阶段、风险、验证方式                             |
-| `user-approval`             | 用户批准计划后才能实现   | `approve-plan --prompt "..."`                                              |
-| `implement`                 | 允许修改代码             | 计划已批准 + 已读取规则                                                     |
-| `verify`                    | 验证实现                 | 命令输出、关键链路证据、review 后复验                                       |
-| `review`                    | 代码 review              | 逐文件 review、严重级别；高危需 `mewoflow rework` 退回                       |
-| `archive`                   | 归档任务                 | 总结、验证结果、review 结论；未解决高危风险需 `approve-deferred-risk`          |
+| Gate                        | 用途                       | 关键证据                                                              |
+| --------------------------- | -------------------------- | --------------------------------------------------------------------- |
+| `pending-task-confirmation` | 判断任务类型，等待用户确认 | `accept-judgment` / `reject-judgment`、`propose-task`、`confirm-task` |
+| `research`                  | 获取最新资料和上下文       | `## Tool Evidence`（WebSearch/WebFetch/MCP/skill）                    |
+| `grill`                     | 使用 `grill-me` 追问需求   | 提问日志、决策覆盖、锁定决策、验收标准、停止理由                      |
+| `plan`                      | 编写实现计划               | 快捷/现成方案扫描、MVP 切片、阶段、风险、验证方式                     |
+| `user-approval`             | 用户批准计划后才能实现     | `approve-plan --prompt "..."`                                         |
+| `implement`                 | 允许修改代码               | 计划已批准 + 已读取规则                                               |
+| `verify`                    | 验证实现                   | 命令输出、关键链路证据、review 后复验                                 |
+| `review`                    | 代码 review                | 逐文件 review、严重级别；高危需 `mewoflow rework` 退回                |
+| `archive`                   | 归档任务                   | 总结、验证结果、review 结论；未解决高危风险需 `approve-deferred-risk` |
 
 ## 常用命令
 
@@ -118,12 +118,12 @@ CLAUDE.md                          # Claude Code 项目记忆
 
 ## Hooks
 
-| Hook               | 职责                                                     |
-| ------------------ | -------------------------------------------------------- |
-| `UserPromptSubmit` | 拦截新请求，创建 pending judgment，引导显式 CLI 推进       |
-| `PreToolUse`       | 阻止未确认时改代码/脚手架/安装依赖，保护状态文件            |
-| `PostToolUse`      | 记录文件读取、搜索与命令执行                               |
-| `Stop`             | 任务未完成时阻止 AI 直接结束                               |
+| Hook               | 职责                                                 |
+| ------------------ | ---------------------------------------------------- |
+| `UserPromptSubmit` | 拦截新请求，创建 pending judgment，引导显式 CLI 推进 |
+| `PreToolUse`       | 阻止未确认时改代码/脚手架/安装依赖，保护状态文件     |
+| `PostToolUse`      | 记录文件读取、搜索与命令执行                         |
+| `Stop`             | 任务未完成时阻止 AI 直接结束                         |
 
 ## Troubleshooting
 
