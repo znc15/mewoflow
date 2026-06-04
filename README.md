@@ -37,17 +37,16 @@ mewoflow init          # 初始化项目 wiring 与 hooks
 向 Claude Code 提出开发任务后，MewoFlow 会按以下流程管控：
 
 ```mermaid
-flowchart LR
-    A[judgment-review] --> B[pending-task-confirmation]
-    B --> C[research]
-    C --> D[grill]
-    D --> E[plan]
-    E --> F[user-approval]
-    F --> G[implement]
-    G --> H[verify]
-    H --> I[review]
-    I --> J[verify]
-    J --> K[archive]
+flowchart TB
+    subgraph phase1 ["前期准备"]
+        direction LR
+        A[judgment-review] --> B[pending] --> C[research] --> D[grill] --> E[plan]
+    end
+    subgraph phase2 ["实现交付"]
+        direction LR
+        F[user-approval] --> G[implement] --> H[verify] --> I[review] --> J[verify] --> K[archive]
+    end
+    phase1 --> phase2
 ```
 
 
