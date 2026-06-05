@@ -33,6 +33,7 @@ export type PromptJudgment = {
 
 export const MEWOFLOW_NOTICE_FIELD = "mewoflowNotice";
 
+/** @deprecated Use judgePrompt() instead; kept for backward compatibility. */
 export function classifyPrompt(prompt: string): PromptClassification {
   return judgePrompt(prompt).classification;
 }
@@ -473,7 +474,7 @@ function isWriteAttempt(tool: string, command: string): boolean {
 }
 
 function requiresWorkflowWithoutActiveTask(tool: string, command: string): boolean {
-  if (/^(Write|MultiEdit|NotebookEdit)$/i.test(tool)) return true;
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/i.test(tool)) return true;
   if (tool !== "Bash") return false;
   return isWriteAttempt(tool, command);
 }
@@ -516,7 +517,8 @@ function isControlledMewoFlowCommand(command: string): boolean {
   const reviewStateArgs = String.raw`(?:${sessionOption})*${reasonArg}(?:${sessionOption})*`;
   const rework = String.raw`rework${reviewStateArgs}`;
   const deferredRisk = String.raw`approve-deferred-risk${reviewStateArgs}`;
-  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split}|${rework}|${deferredRisk})${redirect}$`, "i").test(trimmed);
+  const check = String.raw`check\s+(?:pending-task-confirmation|research|grill|plan|implement|verify|review|archive)${sessionArg}`;
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split}|${rework}|${deferredRisk}|${check})${redirect}$`, "i").test(trimmed);
 }
 
 function isControlledJudgmentCommand(command: string): boolean {

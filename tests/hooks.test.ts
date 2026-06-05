@@ -462,12 +462,14 @@ describe("hooks", () => {
     expect(blockedText).toContain("research -> grill -> plan");
     expect(blockedText).toContain("猫咪正在检查工具调用喵！");
 
-    const simpleEdit = await handlePreToolUse(root, {
+    const blockedEdit = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
       tool_input: { file_path: "src/a.ts" },
     });
-    expect(JSON.stringify(simpleEdit)).not.toContain("deny");
+    const blockedEditText = JSON.stringify(blockedEdit);
+    expect(blockedEditText).toContain("deny");
+    expect(blockedEditText).toContain("No active MewoFlow task");
   });
 
   it("blocks direct file creation without an active task", async () => {

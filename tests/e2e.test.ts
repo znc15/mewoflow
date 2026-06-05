@@ -8,7 +8,7 @@ import { writeFileEnsured } from "../src/fs.js";
 import { loadSession, loadTask, taskFile } from "../src/task.js";
 
 describe("mewoflow gated workflow", () => {
-  it("requires task confirmation, grill coverage, plan approval, implementation reads, verify, review, re-verify, and archive", async () => {
+  it("requires task confirmation, plan approval, implementation reads, verify, review, re-verify, and archive", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-e2e-"));
 
     await expect(main(["init"], root)).resolves.toBe(0);

@@ -199,8 +199,13 @@ function formatUpdateResult(result: UpdateResult): string {
   return lines.join("\n");
 }
 
+const VALID_CLASSIFICATIONS = ["simple", "standard", "epic"] as const;
+
 async function acceptJudgmentCommand(root: string, args: string[], classificationOverride?: string): Promise<number> {
   const sessionId = optionValue(args, "--session") ?? "default";
+  if (classificationOverride && !VALID_CLASSIFICATIONS.includes(classificationOverride as (typeof VALID_CLASSIFICATIONS)[number])) {
+    return fail(`Invalid --classification "${classificationOverride}". Must be one of: ${VALID_CLASSIFICATIONS.join(", ")}.`);
+  }
   let result;
   try {
     result = await acceptPendingJudgment(root, sessionId, classificationOverride as TaskType | "simple" | undefined);
@@ -349,7 +354,7 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
 
   if (gate === "plan" && !hasPlanApproval(session, task.id)) {
     return fail([
-      `Plan for task ${task.id} is valid, but explicit user approval is required before entering implement.`,
+      `Plan approval is required before entering implement.`,
       "Show the plan to the user. When Claude determines the latest user response approved it, run `mewoflow approve-plan --prompt \"<user approval>\" --session <session-id>` before `mewoflow check plan`.",
     ].join("\n"));
   }
@@ -362,6 +367,15 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
   if (!nextGate) return fail(`No next gate for ${gate}.`);
   if (gate === "archive" && task.taskRole === "parent" && !(await allChildTasksDone(root, task))) {
     return fail(`Parent task ${task.id} cannot be archived until all child tasks are done.`);
+  }
+  if (gate === "archive" && task.deferredRiskApprovals.length === 0) {
+    const reviewEvidence = await readTaskEvidence(root, task, "review");
+    if (hasUnresolvedHighSeverityFinding(reviewEvidence)) {
+      return fail([
+        "Archive cannot proceed with unresolved high-severity findings in review.md.",
+        "Run `mewoflow approve-deferred-risk --reason \"...\"` before `mewoflow check archive`.",
+      ].join("\n"));
+    }
   }
   if (gate === "archive") {
     const archiveMarkdown = await readTaskEvidence(root, task, "archive");
@@ -419,13 +433,26 @@ function formatEvidenceSummary(gate: Gate, evidence: string, session: SessionSta
   }
 
   lines.push("");
-  lines.push("--- LLM Review Required ---");
-  lines.push(`Review the evidence above for the "${gate}" gate.`);
-  lines.push("Determine whether the evidence is sufficient to proceed.");
-  lines.push("If sufficient, this gate check will pass and the task will advance.");
-  lines.push("If insufficient, continue working and try again later.");
+  lines.push("--- Evidence Summary ---");
+  lines.push(`The above is the current evidence for the "${gate}" gate.`);
+  lines.push("Running `mewoflow check` will advance this gate immediately.");
+  lines.push("The agent must confirm the evidence is sufficient before running check; if not, continue working and run check later.");
 
   return lines.join("\n");
+}
+
+function hasUnresolvedHighSeverityFinding(text: string): boolean {
+  return text.split(/\r?\n/).some((line) => {
+    if (!line.trim().startsWith("|")) return false;
+
+    const row = line.replace(/\|/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const hasHighSeverity = /\b(?:high|critical|blocker)\b|高|严重|阻塞/.test(row);
+    if (!hasHighSeverity) return false;
+
+    const markedResolved = /\b(?:fixed|resolved|done|keep|accepted)\b|已修复|已解决|无需处理|接受/.test(row);
+    const markedUnresolved = /\b(?:unresolved|needs?\s+fix|todo|deferred|pending|open|follow[- ]?up|known\s+issue)\b|待修|未修复|未解决|待处理|延期|遗留/.test(row);
+    return markedUnresolved && !markedResolved;
+  });
 }
 
 async function readTaskEvidence(root: string, task: Task, gate: Gate): Promise<string> {
@@ -449,7 +476,8 @@ async function readTaskEvidence(root: string, task: Task, gate: Gate): Promise<s
 }
 
 async function overrideGate(root: string, gate: Gate, args: string[]): Promise<number> {
-  const task = await getActiveTask(root);
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const task = await getActiveTask(root, sessionId);
   if (!task) return fail("No active MewoFlow task.");
   if (task.gate !== gate) return fail(`Current gate is ${task.gate}, not ${gate}.`);
 

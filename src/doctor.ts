@@ -74,9 +74,9 @@ export async function runDoctor(root = process.cwd(), options: DoctorOptions = {
 
 function checkNodeVersion(): DoctorCheck {
   const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
-  return major >= 18
+  return major >= 20
     ? pass("Node.js", `Detected ${process.versions.node}.`)
-    : fail("Node.js", `MewoFlow requires Node.js >=18, detected ${process.versions.node}.`);
+    : fail("Node.js", `MewoFlow requires Node.js >=20, detected ${process.versions.node}.`);
 }
 
 async function checkRequiredFiles(root: string): Promise<DoctorCheck[]> {

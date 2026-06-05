@@ -127,4 +127,51 @@ Run npm test after rework.
     expect(updated.gate).toBe("verify");
     expect(updated.reviewed).toBe(true);
   });
+
+  it("blocks archive when review has unresolved high-severity findings without deferred risk approval", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-archive-risk-"));
+    const task = await createTask(root, { title: "archive risk gate", type: "standard", gate: "archive" });
+    await saveTask(root, { ...task, reviewed: true });
+    await writeFileEnsured(
+      path.join(root, ".mewoflow", "tasks", task.id, "review.md"),
+      `# Review
+
+## File-by-file Review
+| File | Severity | Finding | Decision |
+|---|---|---|---|
+| src/cli.ts | high | Unresolved auth bypass | pending fix |
+`,
+    );
+    await writeFileEnsured(
+      path.join(root, ".mewoflow", "tasks", task.id, "archive.md"),
+      "# Archive\n\n## Summary\nDone.\n",
+    );
+
+    await expect(main(["check", "archive"], root)).resolves.toBe(1);
+    const unchanged = await loadTask(root, task.id);
+    expect(unchanged.gate).toBe("archive");
+  });
+
+  it("rejects invalid accept-judgment classification values", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-classification-"));
+    await writeFileEnsured(
+      path.join(root, ".mewoflow", "runtime", "sessions", "default.json"),
+      JSON.stringify({
+        pendingJudgment: {
+          classification: "undetermined",
+          requiresWorkflow: false,
+          reason: "test",
+          prompt: "test",
+          created_at: new Date().toISOString(),
+        },
+        planApprovals: {},
+        readFiles: [],
+        searchTools: [],
+        skillUses: [],
+        commands: [],
+      }),
+    );
+
+    await expect(main(["accept-judgment", "--classification", "invalid", "--session", "default"], root)).resolves.toBe(1);
+  });
 });

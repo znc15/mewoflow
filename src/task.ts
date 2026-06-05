@@ -505,7 +505,7 @@ export async function splitParentTaskFromPlan(root: string, sessionId = "default
 
   const plan = await readTaskMarkdown(root, parent, "plan.md");
   const titles = extractChildTaskTitles(plan);
-  if (titles.length === 0) throw new Error("Plan must list child tasks under `## Parent / Child Task Breakdown` before splitting.");
+  if (titles.length === 0) throw new Error("Plan must list child tasks before splitting.");
 
   const children: Task[] = [];
   for (const title of titles) {
