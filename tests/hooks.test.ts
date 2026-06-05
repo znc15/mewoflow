@@ -14,7 +14,39 @@ import {
   handleUserPromptSubmit,
 } from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
-import { loadSession, loadTask, recordReadFile, sessionFile, taskFile } from "../src/task.js";
+import { loadSession, loadTask, recordReadFile, recordSkillUse, sessionFile, taskFile } from "../src/task.js";
+
+async function seedDomainSkills(root: string): Promise<void> {
+  await writeFileEnsured(
+    path.join(root, ".claude", "skills", "react-ui", "SKILL.md"),
+    "---\ndescription: React UI component development best practices\n---\n# React UI\n",
+  );
+  await writeFileEnsured(
+    path.join(root, ".claude", "skills", "api-server", "SKILL.md"),
+    "---\ndescription: API server and backend route development\n---\n# API Server\n",
+  );
+}
+
+async function prepareImplementReady(root: string, sessionId = "s1") {
+  const task = await createConfirmedTask(root, sessionId);
+  task.gate = "plan";
+  await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+  await expect(main(["approve-plan", "--prompt", "approved", "--session", sessionId], root)).resolves.toBe(0);
+
+  task.gate = "implement";
+  await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+
+  for (const file of [
+    ".mewoflow/rules.md",
+    `.mewoflow/tasks/${task.id}/research.md`,
+    `.mewoflow/tasks/${task.id}/grill.md`,
+    `.mewoflow/tasks/${task.id}/plan.md`,
+  ]) {
+    await recordReadFile(root, sessionId, file);
+  }
+
+  return task;
+}
 
 async function createConfirmedTask(root: string, sessionId = "s1") {
   const judgment = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: sessionId });
@@ -670,6 +702,78 @@ describe("hooks", () => {
     expect(String(completed.additionalContext)).toContain("do not run mewoflow check");
   });
 
+  it("blocks frontend implementation edits until a matching local skill is traced", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await seedDomainSkills(root);
+    await prepareImplementReady(root);
+
+    const blocked = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: "src/components/Button.tsx" },
+    });
+    const blockedText = JSON.stringify(blocked);
+    expect(blockedText).toContain("deny");
+    expect(blockedText).toContain("frontend implementation edit blocked");
+    expect(blockedText).toContain("react-ui");
+    expect(blockedText).toContain("discover relevant local skills");
+
+    await recordReadFile(root, "s1", ".claude/skills/react-ui/SKILL.md");
+    const allowed = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: "src/components/Button.tsx" },
+    });
+    expect(JSON.stringify(allowed)).not.toContain("deny");
+  });
+
+  it("blocks backend implementation edits until a matching local skill is invoked", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await seedDomainSkills(root);
+    await prepareImplementReady(root);
+
+    const blocked = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Write",
+      tool_input: { file_path: "src/server/routes/auth.ts" },
+    });
+    expect(JSON.stringify(blocked)).toContain("backend implementation edit blocked");
+    expect(JSON.stringify(blocked)).toContain("api-server");
+
+    await recordSkillUse(root, "s1", "api-server");
+    const allowed = await handlePreToolUse(root, {
+      session_id: "s1",
+      tool_name: "Write",
+      tool_input: { file_path: "src/server/routes/auth.ts" },
+    });
+    expect(JSON.stringify(allowed)).not.toContain("deny");
+  });
+
+  it("records skill reads from SKILL.md and warns on untraced domain edits", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await seedDomainSkills(root);
+    await prepareImplementReady(root);
+
+    const readPost = await handlePostToolUse(root, {
+      session_id: "s1",
+      tool_name: "Read",
+      tool_input: { file_path: ".claude/skills/react-ui/SKILL.md" },
+    });
+    expect(String(readPost.additionalContext)).not.toContain("could not record skill read");
+
+    const session = await loadSession(root, "s1");
+    expect(session.readFiles).toContain(".claude/skills/react-ui/SKILL.md");
+    expect(session.skillUses.some((entry) => entry.skill === "react-ui")).toBe(true);
+
+    const warnPost = await handlePostToolUse(root, {
+      session_id: "s1",
+      tool_name: "Edit",
+      tool_input: { file_path: "src/server/routes/auth.ts" },
+    });
+    expect(String(warnPost.additionalContext)).toContain("backend implementation edits were recorded");
+    expect(String(warnPost.additionalContext)).toContain("api-server");
+  });
+
   it("recovers from corrupted session JSON without crashing stop", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const file = sessionFile(root, "s1");
@@ -684,6 +788,7 @@ describe("hooks", () => {
       searchTools: [],
       skillUses: [],
       commands: [],
+      implementationDomains: {},
     });
 
     await expect(handleStop(root, { session_id: "s1" })).resolves.toEqual({});

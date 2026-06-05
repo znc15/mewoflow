@@ -96,6 +96,8 @@ export type CommandRecord = {
   gate?: Gate;
 };
 
+export type ImplementationDomain = "frontend" | "backend";
+
 export type SessionState = {
   activeTaskId?: string;
   pendingJudgment?: PendingJudgment;
@@ -108,6 +110,7 @@ export type SessionState = {
   searchTools: ToolEvidence[];
   skillUses: SkillUse[];
   commands: CommandRecord[];
+  implementationDomains?: Partial<Record<ImplementationDomain, boolean>>;
 };
 
 const gateAfterCheck: Partial<Record<Gate, Gate>> = {
@@ -618,6 +621,13 @@ export async function recordSkillUse(root: string, sessionId: string, skill: str
   }));
 }
 
+export async function recordImplementationDomain(root: string, sessionId: string, domain: ImplementationDomain): Promise<void> {
+  await updateSession(root, sessionId, (session) => ({
+    ...session,
+    implementationDomains: { ...session.implementationDomains, [domain]: true },
+  }));
+}
+
 export async function splitParentTaskFromPlan(root: string, sessionId = "default"): Promise<Task[]> {
   const parent = await getActiveTask(root, sessionId);
   if (!parent) throw new Error("No active MewoFlow task.");
@@ -795,6 +805,10 @@ function mergeSessionStates(primary: SessionState, secondary: SessionState): Ses
     searchTools: [...primary.searchTools, ...secondary.searchTools],
     skillUses: [...primary.skillUses, ...secondary.skillUses],
     commands: [...primary.commands, ...secondary.commands],
+    implementationDomains: {
+      ...primary.implementationDomains,
+      ...secondary.implementationDomains,
+    },
   };
 }
 
@@ -837,6 +851,7 @@ function emptySessionState(): SessionState {
     searchTools: [],
     skillUses: [],
     commands: [],
+    implementationDomains: {},
   };
 }
 
@@ -859,7 +874,17 @@ function normalizeSessionState(session: Partial<SessionState>): SessionState {
     commands: Array.isArray(session.commands)
       ? session.commands.map(normalizeCommandRecord).filter((entry): entry is CommandRecord => Boolean(entry))
       : [],
+    implementationDomains: normalizeImplementationDomains(session.implementationDomains),
   };
+}
+
+function normalizeImplementationDomains(value: unknown): Partial<Record<ImplementationDomain, boolean>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const domains = value as Partial<Record<ImplementationDomain, boolean>>;
+  const normalized: Partial<Record<ImplementationDomain, boolean>> = {};
+  if (domains.frontend) normalized.frontend = true;
+  if (domains.backend) normalized.backend = true;
+  return normalized;
 }
 
 function normalizeTask(task: Partial<Task>): Task {

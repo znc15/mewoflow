@@ -1,4 +1,15 @@
 import {
+  classifyImplementationTargetWithConfig,
+  discoverLocalSkills,
+  hasDomainSkillEvidenceForSkills,
+  implementDomainSkillWarnings,
+  loadDomainSkillsConfig,
+  missingDomainSkillMessage,
+  relevantSkillsForDomain,
+  skillNameFromSkillReadPath,
+  writeTargetsForPreToolUse,
+} from "./domain-skills.js";
+import {
   discoverSkillNames,
   getActiveTask,
   hasArchiveApproval,
@@ -9,6 +20,7 @@ import {
   loadSessionWithDefault,
   normalizePath,
   recordCommand,
+  recordImplementationDomain,
   recordReadFile,
   recordSearchTool,
   recordSkillUse,
@@ -199,6 +211,9 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
     return deny(`Read required MewoFlow context before editing: ${missingReads.join(", ")}`);
   }
 
+  const domainDenyReason = await domainSkillDenyReason(root, session, task, tool, target, command);
+  if (domainDenyReason) return deny(domainDenyReason);
+
   return allowPreToolUse();
 }
 
@@ -209,15 +224,30 @@ export async function handlePostToolUse(root: string, input: HookInput): Promise
   const command = String(input.tool_input?.command ?? "");
   const warnings: string[] = [];
 
-  if (isReadTool(tool) && target) await recordHookEvidence(warnings, "read file", () => recordReadFile(root, sessionId, target));
+  if (isReadTool(tool) && target) {
+    await recordHookEvidence(warnings, "read file", () => recordReadFile(root, sessionId, target));
+    const skillFromRead = skillNameFromSkillReadPath(normalizePath(target, root));
+    if (skillFromRead) await recordHookEvidence(warnings, "skill read", () => recordSkillUse(root, sessionId, skillFromRead));
+  }
   if (isSearchTool(tool)) await recordHookEvidence(warnings, "search tool", () => recordSearchTool(root, sessionId, tool));
   if (isSkillTool(tool)) await recordHookEvidence(warnings, "skill use", () => recordSkillUse(root, sessionId, skillName(input) ?? tool));
   if (tool === "Bash" && command) await recordHookEvidence(warnings, "bash command", () => recordCommand(root, sessionId, command));
 
   const task = await getActiveTask(root, sessionId);
   const session = await loadSessionWithDefault(root, sessionId);
+  if (task?.gate === "implement") {
+    await recordImplementationDomainsFromWrite(root, sessionId, task, tool, target, command);
+  }
+
   const skillCoaching = task ? postToolSkillCoaching(task, session) : null;
   if (skillCoaching) warnings.push(skillCoaching);
+
+  if (task?.gate === "implement") {
+    const localSkills = await discoverLocalSkills(root);
+    const config = await loadDomainSkillsConfig(root);
+    const refreshedSession = await loadSessionWithDefault(root, sessionId);
+    warnings.push(...implementDomainSkillWarnings(refreshedSession, task, localSkills, config));
+  }
 
   return eventOutput("PostToolUse", warnings.length > 0 ? `MewoFlow guidance: ${warnings.join("; ")}` : undefined);
 }
@@ -415,9 +445,55 @@ function skillDiscoveryGuidance(task: Task, session: SessionState, skillNames: s
       ? "A skill use is already recorded for this gate; keep citing it in the current evidence file."
       : `Before advancing this gate, browse available skills, read any that match the task domain (${task.gate}), and apply them when they add real value. Record which skills were considered or used in the gate evidence.`,
     task.gate === "implement"
-      ? "For frontend/backend/UI work, prefer domain skills (design, framework, language best practices) over improvising without guidance."
+      ? "For frontend/backend work, discover local skills under .claude/skills/ (and ~/.claude/skills/ when relevant); read matching SKILL.md files before editing."
       : "",
   ].filter(Boolean).join(" ");
+}
+
+async function domainSkillDenyReason(
+  root: string,
+  session: SessionState,
+  task: Task,
+  tool: string,
+  target: string,
+  command: string,
+): Promise<string | null> {
+  if (task.gate !== "implement") return null;
+
+  const config = await loadDomainSkillsConfig(root);
+  const localSkills = await discoverLocalSkills(root);
+  const writeTargets = writeTargetsForPreToolUse(tool, target, command);
+
+  for (const writeTarget of writeTargets) {
+    const domain = classifyImplementationTargetWithConfig(writeTarget, config);
+    if (!domain) continue;
+
+    const candidates = relevantSkillsForDomain(domain, localSkills, config);
+    if (candidates.length === 0) continue;
+    if (hasDomainSkillEvidenceForSkills(session, task, candidates)) continue;
+
+    return missingDomainSkillMessage(domain, writeTarget, candidates);
+  }
+
+  return null;
+}
+
+async function recordImplementationDomainsFromWrite(
+  root: string,
+  sessionId: string,
+  task: Task,
+  tool: string,
+  target: string,
+  command: string,
+): Promise<void> {
+  const config = await loadDomainSkillsConfig(root);
+  const writeTargets = writeTargetsForPreToolUse(tool, target, command);
+
+  for (const writeTarget of writeTargets) {
+    const domain = classifyImplementationTargetWithConfig(writeTarget, config);
+    if (!domain) continue;
+    await recordImplementationDomain(root, sessionId, domain);
+  }
 }
 
 function postToolSkillCoaching(task: Task, session: SessionState): string | null {
