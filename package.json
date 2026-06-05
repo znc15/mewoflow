@@ -1,6 +1,6 @@
 {
   "name": "mewoflow",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "description": "Local Claude Code workflow gates for research, grill, planning, implementation, verification, and archive.",
   "license": "MIT",
   "repository": {
