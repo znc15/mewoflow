@@ -301,6 +301,7 @@ export function missingDomainSkillMessage(
 
   return [
     `${domain} implementation edit blocked for ${writeTarget}.`,
+    "Model domain judgment required: explicitly decide frontend/backend/none for this write target and record the reason in active task evidence or implementation notes before editing.",
     "Before editing, discover relevant local skills instead of assuming fixed built-in names.",
     "List `.claude/skills/` in this project and check `~/.claude/skills/` for global skills.",
     `Relevant ${domain} skills discovered: ${discoveredList}.`,
@@ -327,7 +328,7 @@ export function implementDomainSkillWarnings(
 
     const examples = candidates.slice(0, 3).map((skill) => skill.name).join(", ");
     warnings.push(
-      `${domain} implementation edits were recorded without a traced read/invocation of a relevant local skill; discover skills under .claude/skills/ and read one such as ${examples} before more ${domain} edits`,
+      `${domain} implementation edits were recorded without a traced read/invocation of a relevant local skill; also record the Model domain judgment (frontend/backend/none) with reason; discover skills under .claude/skills/ and read one such as ${examples} before more ${domain} edits`,
     );
   }
 

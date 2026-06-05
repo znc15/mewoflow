@@ -106,6 +106,7 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
         "Continue the current gate. Do not create a new task or skip ahead.",
         "Required gate order: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
         nextActionForGate(activeTask),
+        `Before running \`mewoflow check ${activeTask.gate}\`, record a Model evidence sufficiency judgment with reason in the active gate evidence file; if evidence is insufficient, continue working instead of checking.`,
         activeTask.gate === "plan"
           ? `If the latest user response approves the plan, do not let this hook infer it from natural language; run \`npx mewoflow approve-plan --prompt "<user approval>" --session ${sessionId}\` before \`mewoflow check plan\`.`
           : activeTask.gate === "archive"
@@ -445,7 +446,7 @@ function skillDiscoveryGuidance(task: Task, session: SessionState, skillNames: s
       ? "A skill use is already recorded for this gate; keep citing it in the current evidence file."
       : `Before advancing this gate, browse available skills, read any that match the task domain (${task.gate}), and apply them when they add real value. Record which skills were considered or used in the gate evidence.`,
     task.gate === "implement"
-      ? "For frontend/backend work, discover local skills under .claude/skills/ (and ~/.claude/skills/ when relevant); read matching SKILL.md files before editing."
+      ? "For frontend/backend work, first make a Model domain judgment for each write target (frontend/backend/none) with reason, then discover local skills under .claude/skills/ (and ~/.claude/skills/ when relevant); read matching SKILL.md files before editing."
       : "",
   ].filter(Boolean).join(" ");
 }
@@ -688,7 +689,7 @@ function nextActionForGate(task: Task): string {
     return `Next action: discover and apply relevant skills for planning shortcuts; before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill scan and record MVP slice, phases, risks, and parent/child breakdown when applicable (LLM decides structure); then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
   }
   if (task.gate === "implement") {
-    return `Next action: discover and read relevant frontend/backend/framework skills before editing; read .mewoflow/rules.md, .mewoflow/specs/, plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
+    return `Next action: make a Model domain judgment for intended write targets (frontend/backend/none) with reasons, discover and read relevant frontend/backend/framework skills before editing, then read .mewoflow/rules.md, .mewoflow/specs/, plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
   }
   if (task.gate === "verify") {
     return task.reviewed

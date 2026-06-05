@@ -165,6 +165,8 @@ describe("domain-skills", () => {
     const message = missingDomainSkillMessage("frontend", "src/components/Button.tsx", ["react-ui", "project-conventions"]);
 
     expect(message).toContain("frontend implementation edit blocked");
+    expect(message).toContain("Model domain judgment");
+    expect(message).toContain("frontend/backend/none");
     expect(message).toContain("discover relevant local skills");
     expect(message).toContain(".claude/skills/");
     expect(message).toContain("~/.claude/skills/");

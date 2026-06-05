@@ -122,7 +122,11 @@ Run npm test after rework.
 `,
     );
 
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(main(["check", "review"], root)).resolves.toBe(0);
+    expect(log.mock.calls.join("\n")).toContain("Model evidence sufficiency judgment required");
+    log.mockRestore();
+
     const updated = await loadTask(root, task.id);
     expect(updated.gate).toBe("verify");
     expect(updated.reviewed).toBe(true);

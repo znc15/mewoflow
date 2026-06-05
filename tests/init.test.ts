@@ -27,8 +27,22 @@ describe("initProject", () => {
     await expect(fs.stat(path.join(root, ".claude", "skills", "mewoflow-doctor", "SKILL.md"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"))).resolves.toBeTruthy();
 
-    await expect(fs.readFile(path.join(root, "CLAUDE.md"), "utf8")).resolves.toContain("@AGENTS.md");
-    await expect(fs.readFile(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), "utf8")).resolves.toContain("npx mewoflow doctor");
+    const agentsText = await fs.readFile(path.join(root, "AGENTS.md"), "utf8");
+    const claudeText = await fs.readFile(path.join(root, "CLAUDE.md"), "utf8");
+    const rulesText = await fs.readFile(path.join(root, ".mewoflow", "rules.md"), "utf8");
+    const entrySkillText = await fs.readFile(path.join(root, ".claude", "skills", "mewoflow", "SKILL.md"), "utf8");
+
+    expect(claudeText).toContain("@AGENTS.md");
+    expect(agentsText).toContain("Model evidence sufficiency judgment");
+    expect(agentsText).toContain("Model domain judgment");
+    expect(agentsText).toContain("frontend/backend/none");
+    expect(claudeText).toContain("Model evidence sufficiency judgment");
+    expect(claudeText).toContain("Model domain judgment");
+    expect(rulesText).toContain("Model evidence sufficiency judgment");
+    expect(rulesText).toContain("Model domain judgment");
+    expect(entrySkillText).toContain("npx mewoflow doctor");
+    expect(entrySkillText).toContain("Model evidence sufficiency judgment");
+    expect(entrySkillText).toContain("Model domain judgment");
     await expect(fs.readFile(path.join(root, ".claude", "skills", "grill-me", "SKILL.md"), "utf8")).resolves.toContain("Interview me relentlessly");
     const hookText = await fs.readFile(path.join(root, ".mewoflow", "runtime", "mewoflow-hook.cjs"), "utf8");
     expect(hookText).not.toContain('spawnSync("npx"');

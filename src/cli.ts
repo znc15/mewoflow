@@ -509,7 +509,8 @@ function formatEvidenceSummary(gate: Gate, evidence: string, session: SessionSta
   lines.push("--- Evidence Summary ---");
   lines.push(`The above is the current evidence for the "${gate}" gate.`);
   lines.push("Running `mewoflow check` will advance this gate immediately.");
-  lines.push("The agent must confirm the evidence is sufficient before running check; if not, continue working and run check later.");
+  lines.push("Model evidence sufficiency judgment required: before running check, the agent must record whether this evidence is sufficient and why in the gate evidence file.");
+  lines.push("If that judgment is missing or says insufficient, continue working and run check later instead of advancing.");
 
   return lines.join("\n");
 }

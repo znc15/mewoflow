@@ -53,7 +53,7 @@ flowchart TB
 
 ## 工作流门禁
 
-`mewoflow check <gate>` 采用 **证据摘要模式**：CLI 会输出当前证据文件内容与工具追踪摘要，然后**立即推进该 gate**。Agent 须在确认证据充分后再运行 check；若证据不足，应先完善证据再执行 check。不再通过代码校验固定的 section 或字段。
+`mewoflow check <gate>` 采用 **证据摘要模式**：CLI 会输出当前证据文件内容与工具追踪摘要，然后**立即推进该 gate**。Agent 须先在当前 gate 证据文件中写出 **Model evidence sufficiency judgment**（证据是否充分 + 理由）后再运行 check；若证据不足，应先完善证据再执行 check。不再通过代码校验固定的 section 或字段。
 
 | Gate                        | 用途                       | 关键证据                                                              |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------- |
@@ -62,12 +62,12 @@ flowchart TB
 | `grill`                     | 使用 `grill-me` 追问需求   | `grill.md`：提问日志、决策覆盖、锁定决策、验收标准、停止理由          |
 | `plan`                      | 编写实现计划               | `plan.md`：快捷方案扫描、MVP 切片、阶段、风险、验证方式               |
 | `user-approval`             | 用户批准计划后才能实现     | `approve-plan --prompt "..."`                                         |
-| `implement`                 | 允许修改代码               | 计划已批准 + 已读取规则；hooks 动态发现 `.claude/skills/` 本地 skill，编辑前后端文件前须先读取/调用匹配 skill（PreToolUse 硬拦，PostToolUse 软提醒） |
+| `implement`                 | 允许修改代码               | 计划已批准 + 已读取规则；LLM 须先记录 **Model domain judgment**（write target 为 frontend/backend/none + 理由）；hooks 动态发现 `.claude/skills/` 本地 skill，编辑前后端文件前须先读取/调用匹配 skill（PreToolUse 硬拦，PostToolUse 软提醒） |
 | `verify`                    | 验证实现                   | `verify.md`：命令输出、关键链路证据、review 后复验                    |
 | `review`                    | 代码 review（LLM 审查）    | `review.md`：逐文件 review；需返工时运行 `mewoflow rework` 而非阻塞 check |
 | `archive`                   | 归档任务                   | `archive.md` + `approve-archive --prompt "..."`；未解决高危风险需 `approve-deferred-risk` |
 
-证据文件（`research.md`、`grill.md`、`plan.md`、`verify.md`、`review.md`、`archive.md`）由 LLM 自由编写，**无固定 section 结构**；gate 推进依赖 LLM 审查证据是否充分。
+证据文件（`research.md`、`grill.md`、`plan.md`、`verify.md`、`review.md`、`archive.md`）由 LLM 自由编写，**无固定 section 结构**；gate 推进依赖 LLM 审查证据是否充分。每次 `mewoflow check <gate>` 前，LLM 须在对应证据文件中写出 **Model evidence sufficiency judgment**（是否充分 + 理由）。前后端实现编辑前，LLM 还须写出 **Model domain judgment**（frontend/backend/none + 理由），再读取或调用匹配 skill。
 
 ## 常用命令
 

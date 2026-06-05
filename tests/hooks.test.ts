@@ -288,6 +288,7 @@ describe("hooks", () => {
     expect(String(activeContext.additionalContext)).toContain("Current gate: research");
     expect(String(activeContext.additionalContext)).toContain("Mandatory visible response");
     expect(String(activeContext.additionalContext)).toContain("grill-me");
+    expect(String(activeContext.additionalContext)).toContain("Model evidence sufficiency judgment");
 
     const active = await loadSession(root, "s1");
     expect(active.activeTaskId).toBeTruthy();
@@ -702,6 +703,19 @@ describe("hooks", () => {
     expect(String(completed.additionalContext)).toContain("do not run mewoflow check");
   });
 
+  it("guides implement gate with model domain and evidence sufficiency judgments", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await prepareImplementReady(root);
+
+    const activeContext = await handleUserPromptSubmit(root, { prompt: "继续实现", session_id: "s1" });
+    const context = String(activeContext.additionalContext);
+
+    expect(context).toContain("Current gate: implement");
+    expect(context).toContain("Model domain judgment");
+    expect(context).toContain("frontend/backend/none");
+    expect(context).toContain("Model evidence sufficiency judgment");
+  });
+
   it("blocks frontend implementation edits until a matching local skill is traced", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     await seedDomainSkills(root);
@@ -715,6 +729,8 @@ describe("hooks", () => {
     const blockedText = JSON.stringify(blocked);
     expect(blockedText).toContain("deny");
     expect(blockedText).toContain("frontend implementation edit blocked");
+    expect(blockedText).toContain("Model domain judgment");
+    expect(blockedText).toContain("frontend/backend/none");
     expect(blockedText).toContain("react-ui");
     expect(blockedText).toContain("discover relevant local skills");
 
@@ -810,6 +826,7 @@ describe("hooks", () => {
       tool_input: { file_path: "src/server/routes/auth.ts" },
     });
     expect(String(warnPost.additionalContext)).toContain("backend implementation edits were recorded");
+    expect(String(warnPost.additionalContext)).toContain("Model domain judgment");
     expect(String(warnPost.additionalContext)).toContain("api-server");
   });
 
