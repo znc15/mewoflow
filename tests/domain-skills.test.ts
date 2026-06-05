@@ -97,15 +97,37 @@ describe("domain-skills", () => {
 
     expect(classifyImplementationTargetWithConfig("src/components/Button.tsx", config)).toBe("frontend");
     expect(classifyImplementationTargetWithConfig("src/server/routes/auth.ts", config)).toBe("backend");
+    expect(classifyImplementationTargetWithConfig("src/auth.ts", config)).toBe("backend");
+    expect(classifyImplementationTargetWithConfig("src/hooks.ts", config)).toBe("backend");
     expect(classifyImplementationTargetWithConfig("README.md", config)).toBeNull();
   });
 
+  it("ignores invalid custom path pattern regexes during classification", () => {
+    expect(
+      classifyImplementationTargetWithConfig("src/components/Button.tsx", {
+        frontend: { pathPatterns: ["["], pathKeywords: ["components"] },
+        backend: { pathPatterns: ["("], pathKeywords: ["server"] },
+      }),
+    ).toBe("frontend");
+  });
+
   it("extracts write targets from bash redirection commands", () => {
-    const targets = writeTargetsForPreToolUse("Bash", "", 'echo "ok" > src/server/routes/auth.ts');
+    const targets = writeTargetsForPreToolUse("Bash", "", 'echo "ok" > README.md && echo "x" > src/server/routes/auth.ts');
+    expect(targets).toContain("README.md");
     expect(targets).toContain("src/server/routes/auth.ts");
   });
 
-  it("detects skill evidence from SKILL.md reads and Skill tool usage", () => {
+  it("extracts write targets from common shell and PowerShell write commands", () => {
+    expect(writeTargetsForPreToolUse("Bash", "", "touch src/components/Button.tsx")).toContain("src/components/Button.tsx");
+    expect(writeTargetsForPreToolUse("Bash", "", "echo ok | tee src/server/routes/auth.ts")).toContain("src/server/routes/auth.ts");
+    expect(writeTargetsForPreToolUse("Bash", "", "cp template.tsx src/components/Button.tsx")).toContain("src/components/Button.tsx");
+    expect(writeTargetsForPreToolUse("Bash", "", "mv tmp.ts src/server/routes/auth.ts")).toContain("src/server/routes/auth.ts");
+    expect(writeTargetsForPreToolUse("Bash", "", "Set-Content src/server/routes/auth.ts ok")).toContain("src/server/routes/auth.ts");
+    expect(writeTargetsForPreToolUse("Bash", "", "Out-File -FilePath src/components/Button.tsx")).toContain("src/components/Button.tsx");
+    expect(writeTargetsForPreToolUse("Bash", "", "New-Item -Path src/components/Button.tsx")).toContain("src/components/Button.tsx");
+  });
+
+  it("detects skill evidence only from current implement gate skill usage", () => {
     const task = implementTask();
     const skills = [
       { name: "react-ui", relativePath: ".claude/skills/react-ui", description: "react ui", source: "project" as const },
@@ -118,7 +140,19 @@ describe("domain-skills", () => {
       ...emptySession(),
       readFiles: [".claude/skills/react-ui/SKILL.md"],
     };
-    expect(hasDomainSkillEvidenceForSkills(withRead, task, skills)).toBe(true);
+    expect(hasDomainSkillEvidenceForSkills(withRead, task, skills)).toBe(false);
+
+    const wrongGateUse: SessionState = {
+      ...emptySession(),
+      skillUses: [{ skill: "react-ui", at: "2026-06-05T00:00:00.000Z", gate: "plan", taskId: task.id }],
+    };
+    expect(hasDomainSkillEvidenceForSkills(wrongGateUse, task, skills)).toBe(false);
+
+    const otherTaskUse: SessionState = {
+      ...emptySession(),
+      skillUses: [{ skill: "react-ui", at: "2026-06-05T00:00:00.000Z", gate: "implement", taskId: "other-task" }],
+    };
+    expect(hasDomainSkillEvidenceForSkills(otherTaskUse, task, skills)).toBe(false);
 
     const withSkillUse: SessionState = {
       ...emptySession(),

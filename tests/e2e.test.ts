@@ -207,7 +207,7 @@ Build a focused music website MVP.
     const blockedBeforeReads = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
-      tool_input: { file_path: "src/app.ts" },
+      tool_input: { file_path: "README.md" },
     });
     expect(JSON.stringify(blockedBeforeReads)).toContain("Read required MewoFlow context");
 
@@ -223,7 +223,7 @@ Build a focused music website MVP.
     const allowedEdit = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
-      tool_input: { file_path: "src/app.ts" },
+      tool_input: { file_path: "README.md" },
     });
     expect(JSON.stringify(allowedEdit)).not.toContain("deny");
 

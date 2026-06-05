@@ -142,7 +142,24 @@ const DEFAULT_BACKEND_PATH_KEYWORDS = [
   "job",
 ];
 
-const DEFAULT_BACKEND_PATH_EXTENSIONS = [".go", ".php", ".py", ".rs", ".java", ".kt", ".rb", ".sql"];
+const SCRIPT_PATH_EXTENSIONS = new Set([".ts", ".js", ".mjs", ".cjs", ".mts", ".cts"]);
+
+const DEFAULT_BACKEND_PATH_EXTENSIONS = [
+  ".ts",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".mts",
+  ".cts",
+  ".go",
+  ".php",
+  ".py",
+  ".rs",
+  ".java",
+  ".kt",
+  ".rb",
+  ".sql",
+];
 
 const SKILL_READ_PATH_RE = /(?:^|\/)\.claude\/skills\/([^/]+)\/SKILL\.md$/i;
 
@@ -225,9 +242,9 @@ export function relevantSkillsForDomain(
 ): DiscoveredSkill[] {
   const merged = mergeDomainSkillsConfig(defaultDomainSkillsConfig(), config);
   const excluded = new Set((merged.excludeSkills ?? DEFAULT_WORKFLOW_SKILLS).map(normalizeToken));
-  const domainKeywords = merged[domain]?.skillKeywords ?? defaultDomainSkillsConfig()[domain]!.skillKeywords!;
+  const domainKeywords = skillKeywordsForDomain(merged, domain);
   const otherDomain: ImplementationDomain = domain === "frontend" ? "backend" : "frontend";
-  const otherDomainKeywords = merged[otherDomain]?.skillKeywords ?? defaultDomainSkillsConfig()[otherDomain]!.skillKeywords!;
+  const otherDomainKeywords = skillKeywordsForDomain(merged, otherDomain);
 
   return skills.filter((skill) => {
     if (excluded.has(normalizeToken(skill.name))) return false;
@@ -254,11 +271,6 @@ export function hasDomainSkillEvidence(
   );
   if (usedSkills.some((entry) => candidates.has(normalizeToken(entry.skill)))) return true;
 
-  for (const file of session.readFiles) {
-    const skillName = skillNameFromSkillReadPath(file);
-    if (skillName && candidates.has(normalizeToken(skillName))) return true;
-  }
-
   return false;
 }
 
@@ -274,11 +286,6 @@ export function hasDomainSkillEvidenceForSkills(
     (entry) => entry.gate === "implement" && (!entry.taskId || entry.taskId === task.id),
   );
   if (usedSkills.some((entry) => candidateNames.has(normalizeToken(entry.skill)))) return true;
-
-  for (const file of session.readFiles) {
-    const skillName = skillNameFromSkillReadPath(file);
-    if (skillName && candidateNames.has(normalizeToken(skillName))) return true;
-  }
 
   return false;
 }
@@ -364,6 +371,11 @@ function mergePathConfig(base: DomainPathConfig | undefined, override: DomainPat
   };
 }
 
+function skillKeywordsForDomain(config: DomainSkillsConfig, domain: ImplementationDomain): string[] {
+  const configured = stringList(config[domain]?.skillKeywords);
+  return configured.length > 0 ? configured : defaultDomainSkillsConfig()[domain]!.skillKeywords!;
+}
+
 async function collectSkillsFromRoot(
   skillsRoot: string,
   source: DiscoveredSkill["source"],
@@ -408,11 +420,20 @@ function parseSkillDescription(text: string): string {
 function pathDomainScore(target: string, config: DomainPathConfig): number {
   let score = 0;
   const extension = path.posix.extname(target);
+  const pathExtensions = stringList(config.pathExtensions).map((value) => value.toLowerCase());
 
-  if (config.pathExtensions?.some((value) => extension === value.toLowerCase())) score += 3;
-  if (config.pathKeywords?.some((keyword) => containsPathToken(target, keyword))) score += 2;
-  if (config.pathPatterns?.some((pattern) => new RegExp(pattern, "i").test(target))) score += 4;
+  if (pathExtensions.some((value) => extension === value)) score += SCRIPT_PATH_EXTENSIONS.has(extension) ? 1 : 3;
+  if (stringList(config.pathKeywords).some((keyword) => containsPathToken(target, keyword))) score += 2;
+  if (stringList(config.pathPatterns).some((pattern) => safePatternMatches(pattern, target))) score += 4;
   return score;
+}
+
+function safePatternMatches(pattern: string, target: string): boolean {
+  try {
+    return new RegExp(pattern, "i").test(target);
+  } catch {
+    return false;
+  }
 }
 
 function preferAmbiguousDomain(target: string): ImplementationDomain {
@@ -425,7 +446,9 @@ function preferAmbiguousDomain(target: string): ImplementationDomain {
 
 function containsPathToken(target: string, keyword: string): boolean {
   const normalizedKeyword = keyword.toLowerCase();
-  return target.split("/").some((segment) => segment === normalizedKeyword || segment.includes(normalizedKeyword));
+  const segments = target.split("/");
+  const directorySegments = path.posix.extname(segments.at(-1) ?? "") ? segments.slice(0, -1) : segments;
+  return directorySegments.some((segment) => segment === normalizedKeyword || segment.includes(normalizedKeyword));
 }
 
 function isProjectRelatedSkill(skill: DiscoveredSkill, excluded: Set<string>): boolean {
@@ -434,32 +457,179 @@ function isProjectRelatedSkill(skill: DiscoveredSkill, excluded: Set<string>): b
 
 function skillMatchesKeywords(skill: DiscoveredSkill, keywords: string[]): boolean {
   const haystack = [skill.name, skill.relativePath, skill.description].join(" ").toLowerCase();
-  return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+  return stringList(keywords).some((keyword) => haystack.includes(keyword.toLowerCase()));
 }
 
 function normalizeToken(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
 function extractWriteTargetsFromCommand(command: string): string[] {
-  const targets: string[] = [];
+  const targets = new Set<string>();
   const normalized = command.replace(/\\/g, "/");
 
-  const quotedPaths = normalized.matchAll(/(?:^|[\s>&|])(?:"([^"]+)"|'([^']+)')/g);
-  for (const match of quotedPaths) {
-    const candidate = (match[1] ?? match[2] ?? "").replace(/^\.\//, "");
-    if (looksLikeFilePath(candidate)) targets.push(candidate);
+  for (const match of normalized.matchAll(/(?:^|\s)(?:\d{0,2})>>?\s+(?!&)(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g)) {
+    addTarget(targets, match[1] ?? match[2] ?? match[3] ?? "");
   }
 
-  const redirection = /(?:^|\s)(?:\d{0,2})>>?\s+([^\s;&|]+)/.exec(normalized);
-  if (redirection?.[1]) {
-    const candidate = redirection[1].replace(/^['"]|['"]$/g, "").replace(/^\.\//, "");
-    if (looksLikeFilePath(candidate)) targets.push(candidate);
+  const tokens = shellTokens(normalized);
+  for (const segment of commandSegments(tokens)) {
+    for (const target of writeTargetsFromCommandSegment(segment)) {
+      addTarget(targets, target);
+    }
   }
 
-  return targets;
+  return [...targets];
 }
 
 function looksLikeFilePath(candidate: string): boolean {
   return /\.[a-z0-9]{1,8}$/i.test(candidate) || candidate.includes("/");
+}
+
+function addTarget(targets: Set<string>, raw: string): void {
+  const candidate = normalizeCommandPath(raw);
+  if (candidate && looksLikeFilePath(candidate)) targets.add(candidate);
+}
+
+function normalizeCommandPath(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/^\.\//, "")
+    .replace(/[),]+$/g, "");
+}
+
+function shellTokens(command: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  const pushCurrent = () => {
+    if (current) tokens.push(current);
+    current = "";
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      pushCurrent();
+      continue;
+    }
+
+    const next = command[index + 1] ?? "";
+    if ((char === "&" && next === "&") || (char === "|" && next === "|") || (char === ">" && next === ">")) {
+      pushCurrent();
+      tokens.push(`${char}${next}`);
+      index += 1;
+      continue;
+    }
+
+    if (char === ";" || char === "|" || char === ">") {
+      pushCurrent();
+      tokens.push(char);
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
+function commandSegments(tokens: string[]): string[][] {
+  const segments: string[][] = [];
+  let current: string[] = [];
+  for (const token of tokens) {
+    if (token === "&&" || token === "||" || token === ";" || token === "|") {
+      if (current.length > 0) segments.push(current);
+      current = [];
+      continue;
+    }
+    current.push(token);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function writeTargetsFromCommandSegment(tokens: string[]): string[] {
+  const command = commandName(tokens[0] ?? "");
+  if (!command) return [];
+
+  if (command === "touch" || command === "mkdir") return pathArguments(tokens.slice(1));
+  if (command === "tee") return pathArguments(tokens.slice(1));
+  if (command === "rm" || command === "del" || command === "erase" || command === "remove-item") return pathArguments(tokens.slice(1));
+  if (command === "cp" || command === "copy" || command === "copy-item" || command === "mv" || command === "move" || command === "move-item" || command === "ren" || command === "rename" || command === "rename-item") {
+    const optionTargets = optionPathTargets(tokens);
+    const positional = pathArguments(tokens.slice(1));
+    return [...optionTargets, ...(positional.at(-1) ? [positional.at(-1)!] : [])];
+  }
+  if (command === "set-content" || command === "add-content" || command === "clear-content" || command === "out-file" || command === "new-item" || command === "ni") {
+    const optionTargets = optionPathTargets(tokens);
+    const firstPositional = firstPositionalPath(tokens.slice(1));
+    return firstPositional ? [...optionTargets, firstPositional] : optionTargets;
+  }
+
+  return [];
+}
+
+function commandName(raw: string): string {
+  const base = raw.split("/").at(-1) ?? raw;
+  return base.toLowerCase();
+}
+
+function optionPathTargets(tokens: string[]): string[] {
+  const targets: string[] = [];
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    const inline = /^-(?:path|literalpath|filepath|destination|destinationpath)[:=](.+)$/i.exec(token);
+    if (inline?.[1]) targets.push(inline[1]);
+    if (/^-(?:path|literalpath|filepath|destination|destinationpath)$/i.test(token) && tokens[index + 1]) {
+      targets.push(tokens[index + 1]!);
+      index += 1;
+    }
+  }
+  return targets;
+}
+
+function firstPositionalPath(tokens: string[]): string | null {
+  const paths = pathArguments(tokens);
+  return paths[0] ?? null;
+}
+
+function pathArguments(tokens: string[]): string[] {
+  const paths: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token === ">" || token === ">>") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      if (optionConsumesValue(token) && tokens[index + 1]) index += 1;
+      continue;
+    }
+    const candidate = normalizeCommandPath(token);
+    if (looksLikeFilePath(candidate)) paths.push(candidate);
+  }
+  return paths;
+}
+
+function optionConsumesValue(option: string): boolean {
+  return /^-(?:path|literalpath|filepath|destination|destinationpath|value|itemtype|type|encoding)$/i.test(option);
 }

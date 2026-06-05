@@ -535,7 +535,7 @@ describe("hooks", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const task = await createConfirmedTask(root);
 
-    const blockedEarly = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
+    const blockedEarly = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "README.md" } });
     expect(JSON.stringify(blockedEarly)).toContain("deny");
     expect(JSON.stringify(blockedEarly)).toContain("research -> grill -> plan");
     expect(JSON.stringify(blockedEarly)).toContain("猫咪正在检查工具调用喵！");
@@ -543,7 +543,7 @@ describe("hooks", () => {
     task.gate = "implement";
     await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
 
-    const blockedWithoutApproval = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
+    const blockedWithoutApproval = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "README.md" } });
     expect(JSON.stringify(blockedWithoutApproval)).toContain("no explicit user plan approval");
 
     task.gate = "plan";
@@ -556,7 +556,7 @@ describe("hooks", () => {
     task.gate = "implement";
     await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
 
-    const blockedUnread = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
+    const blockedUnread = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "README.md" } });
     expect(JSON.stringify(blockedUnread)).toContain("Read required MewoFlow context");
 
     for (const file of [
@@ -568,7 +568,7 @@ describe("hooks", () => {
       await recordReadFile(root, "s1", file);
     }
 
-    const allowed = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "src/a.ts" } });
+    const allowed = await handlePreToolUse(root, { session_id: "s1", tool_name: "Edit", tool_input: { file_path: "README.md" } });
     expect(JSON.stringify(allowed)).not.toContain("deny");
   });
 
@@ -677,7 +677,7 @@ describe("hooks", () => {
     const allowed = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
-      tool_input: { file_path: "src/a.ts" },
+      tool_input: { file_path: "README.md" },
     });
     expect(JSON.stringify(allowed)).not.toContain("deny");
   });
@@ -718,13 +718,52 @@ describe("hooks", () => {
     expect(blockedText).toContain("react-ui");
     expect(blockedText).toContain("discover relevant local skills");
 
-    await recordReadFile(root, "s1", ".claude/skills/react-ui/SKILL.md");
+    await handlePostToolUse(root, {
+      session_id: "s1",
+      tool_name: "Read",
+      tool_input: { file_path: ".claude/skills/react-ui/SKILL.md" },
+    });
     const allowed = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Edit",
       tool_input: { file_path: "src/components/Button.tsx" },
     });
     expect(JSON.stringify(allowed)).not.toContain("deny");
+  });
+
+  it("blocks shell and PowerShell domain writes until a matching local skill is traced", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await seedDomainSkills(root);
+    await prepareImplementReady(root);
+
+    const shellCommands = [
+      "touch src/components/Button.tsx",
+      "echo ok | tee src/components/Button.tsx",
+      "cp template.tsx src/components/Button.tsx",
+      "Set-Content src/server/routes/auth.ts ok",
+      "Out-File -FilePath src/server/routes/auth.ts",
+    ];
+
+    for (const command of shellCommands) {
+      const blocked = await handlePreToolUse(root, {
+        session_id: "s1",
+        tool_name: "Bash",
+        tool_input: { command },
+      });
+      expect(JSON.stringify(blocked)).toContain("implementation edit blocked");
+    }
+
+    await recordSkillUse(root, "s1", "react-ui");
+    await recordSkillUse(root, "s1", "api-server");
+
+    for (const command of shellCommands) {
+      const allowed = await handlePreToolUse(root, {
+        session_id: "s1",
+        tool_name: "Bash",
+        tool_input: { command },
+      });
+      expect(JSON.stringify(allowed)).not.toContain("deny");
+    }
   });
 
   it("blocks backend implementation edits until a matching local skill is invoked", async () => {
