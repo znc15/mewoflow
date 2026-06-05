@@ -54,6 +54,9 @@ const hookEvents = {
   PreToolUse: "pre-tool-use",
   PostToolUse: "post-tool-use",
   Stop: "stop",
+  TeammateIdle: "teammate-idle",
+  TaskCreated: "task-created",
+  TaskCompleted: "task-completed",
 };
 
 export async function runDoctor(root = process.cwd(), options: DoctorOptions = {}): Promise<DoctorReport> {

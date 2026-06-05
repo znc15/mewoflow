@@ -62,6 +62,18 @@ export type PlanApproval = {
   prompt: string;
 };
 
+export type ArchiveApproval = {
+  approved_at: string;
+  prompt: string;
+};
+
+export type SpecPromptDecision = "skip" | "create";
+
+export type PendingSpecPrompt = {
+  taskId: string;
+  created_at: string;
+};
+
 export type ToolEvidence = {
   tool: string;
   at: string;
@@ -88,7 +100,10 @@ export type SessionState = {
   activeTaskId?: string;
   pendingJudgment?: PendingJudgment;
   pendingTask?: PendingTask;
+  pendingSpecPrompt?: PendingSpecPrompt;
   planApprovals: Record<string, PlanApproval>;
+  archiveApprovals: Record<string, ArchiveApproval>;
+  specDecisions: Record<string, SpecPromptDecision>;
   readFiles: string[];
   searchTools: ToolEvidence[];
   skillUses: SkillUse[];
@@ -428,6 +443,7 @@ export async function confirmPendingTask(root: string, sessionId = "default"): P
     now: new Date(pendingTask.created_at),
   });
   await setActiveTask(root, task.id, sessionId);
+  await setPendingSpecPrompt(root, task.id, sessionId);
   await setActiveTaskForMatchingPendingSessions(root, pendingTask.id, task.id);
   return task;
 }
@@ -444,6 +460,112 @@ export async function approvePlan(root: string, taskId: string, sessionId: strin
 
 export function hasPlanApproval(session: SessionState, taskId: string): boolean {
   return Boolean(session.planApprovals[taskId]);
+}
+
+export async function approveArchive(root: string, taskId: string, sessionId: string, prompt: string): Promise<void> {
+  const approval = { approved_at: new Date().toISOString(), prompt };
+  const session = await loadSession(root, sessionId);
+  await saveSession(root, sessionId, { ...session, archiveApprovals: { ...session.archiveApprovals, [taskId]: approval } });
+  if (sessionId !== "default") {
+    const defaultSession = await loadSession(root, "default");
+    await saveSession(root, "default", { ...defaultSession, archiveApprovals: { ...defaultSession.archiveApprovals, [taskId]: approval } });
+  }
+}
+
+export function hasArchiveApproval(session: SessionState, taskId: string): boolean {
+  return Boolean(session.archiveApprovals[taskId]);
+}
+
+export async function setPendingSpecPrompt(root: string, taskId: string, sessionId = "default"): Promise<void> {
+  const pendingSpecPrompt = { taskId, created_at: new Date().toISOString() };
+  const session = await loadSession(root, sessionId);
+  await saveSession(root, sessionId, { ...session, pendingSpecPrompt });
+  if (sessionId !== "default") {
+    const defaultSession = await loadSession(root, "default");
+    await saveSession(root, "default", { ...defaultSession, pendingSpecPrompt });
+  }
+}
+
+export async function resolveSpecPrompt(root: string, sessionId: string, choice: SpecPromptDecision, taskId?: string): Promise<PendingSpecPrompt | null> {
+  const session = await loadSession(root, sessionId);
+  const defaultPending = sessionId !== "default" && !session.pendingSpecPrompt ? (await loadSession(root, "default")).pendingSpecPrompt : undefined;
+  const pending = session.pendingSpecPrompt ?? defaultPending;
+  if (!pending) return null;
+  if (taskId && pending.taskId !== taskId) return null;
+
+  const nextSession = {
+    ...session,
+    pendingSpecPrompt: undefined,
+    specDecisions: { ...session.specDecisions, [pending.taskId]: choice },
+  };
+  await saveSession(root, sessionId, nextSession);
+  if (sessionId !== "default") {
+    const defaultSession = await loadSession(root, "default");
+    await saveSession(root, "default", {
+      ...defaultSession,
+      pendingSpecPrompt: undefined,
+      specDecisions: { ...defaultSession.specDecisions, [pending.taskId]: choice },
+    });
+  }
+  return pending;
+}
+
+export function hasResolvedSpecPrompt(session: SessionState, taskId: string): boolean {
+  return Boolean(session.specDecisions[taskId]);
+}
+
+export function isSpecFileTarget(target: string): boolean {
+  return /^\.mewoflow\/specs\/[^/]+\.md$/i.test(target.replace(/\\/g, "/"));
+}
+
+export async function discoverSkillNames(root: string): Promise<string[]> {
+  const skillsRoot = path.join(root, ".claude", "skills");
+  if (!(await pathExists(skillsRoot))) return [];
+  const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+}
+
+export async function ensureArchiveSummary(root: string, task: Task): Promise<string> {
+  const existing = (await readTaskMarkdown(root, task, "archive.md")).trim();
+  if (hasMeaningfulArchiveContent(existing)) return existing;
+
+  const [plan, verify, review, grill] = await Promise.all([
+    readTaskMarkdown(root, task, "plan.md"),
+    readTaskMarkdown(root, task, "verify.md"),
+    readTaskMarkdown(root, task, "review.md"),
+    readTaskMarkdown(root, task, "grill.md"),
+  ]);
+
+  const summary = [
+    "# Archive",
+    "",
+    "## Summary",
+    `- Task: ${task.title} (${task.id})`,
+    `- Completed: ${new Date().toISOString()}`,
+    summarizeSection(plan, "Goal") || `- ${task.title} workflow completed.`,
+    "",
+    "## Decisions",
+    summarizeSection(grill, "Locked Decisions") || "- See grill.md for locked decisions.",
+    "",
+    "## Verification",
+    summarizeSection(verify, "Result") || "- See verify.md for verification evidence.",
+    "",
+    "## Review",
+    summarizeSection(review, "Result") || "- See review.md for review conclusions.",
+    "",
+    "## Follow-ups",
+    "- Review deferred items and open questions from plan/review before starting the next task.",
+    "",
+  ].join("\n");
+
+  await writeFileEnsured(taskFile(root, task.id, "archive.md"), summary);
+  return summary;
+}
+
+export function hasMeaningfulArchiveContent(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 40) return false;
+  return /##\s+summary/i.test(trimmed) && /[\p{L}\p{N}]{12,}/u.test(trimmed.replace(/#+\s*/g, " "));
 }
 
 export async function getActiveTaskId(root: string, sessionId = "default"): Promise<string | null> {
@@ -665,7 +787,10 @@ function mergeSessionStates(primary: SessionState, secondary: SessionState): Ses
     activeTaskId: secondary.activeTaskId ?? primary.activeTaskId,
     pendingJudgment: secondary.pendingJudgment ?? primary.pendingJudgment,
     pendingTask: secondary.pendingTask ?? primary.pendingTask,
+    pendingSpecPrompt: secondary.pendingSpecPrompt ?? primary.pendingSpecPrompt,
     planApprovals: { ...primary.planApprovals, ...secondary.planApprovals },
+    archiveApprovals: { ...primary.archiveApprovals, ...secondary.archiveApprovals },
+    specDecisions: { ...primary.specDecisions, ...secondary.specDecisions },
     readFiles: uniqueStrings([...primary.readFiles, ...secondary.readFiles]),
     searchTools: [...primary.searchTools, ...secondary.searchTools],
     skillUses: [...primary.skillUses, ...secondary.skillUses],
@@ -704,7 +829,15 @@ async function setPendingTaskForMatchingSessions(root: string, pendingTaskId: st
 }
 
 function emptySessionState(): SessionState {
-  return { planApprovals: {}, readFiles: [], searchTools: [], skillUses: [], commands: [] };
+  return {
+    planApprovals: {},
+    archiveApprovals: {},
+    specDecisions: {},
+    readFiles: [],
+    searchTools: [],
+    skillUses: [],
+    commands: [],
+  };
 }
 
 function normalizeSessionState(session: Partial<SessionState>): SessionState {
@@ -712,7 +845,10 @@ function normalizeSessionState(session: Partial<SessionState>): SessionState {
     activeTaskId: typeof session.activeTaskId === "string" ? session.activeTaskId : undefined,
     pendingJudgment: normalizePendingJudgment(session.pendingJudgment),
     pendingTask: normalizePendingTask(session.pendingTask),
+    pendingSpecPrompt: normalizePendingSpecPrompt(session.pendingSpecPrompt),
     planApprovals: normalizePlanApprovals(session.planApprovals),
+    archiveApprovals: normalizeArchiveApprovals(session.archiveApprovals),
+    specDecisions: normalizeSpecDecisions(session.specDecisions),
     readFiles: Array.isArray(session.readFiles) ? session.readFiles.filter((file): file is string => typeof file === "string") : [],
     searchTools: Array.isArray(session.searchTools)
       ? session.searchTools.map(normalizeToolEvidence).filter((entry): entry is ToolEvidence => Boolean(entry))
@@ -846,16 +982,54 @@ function isGate(value: unknown): value is Gate {
 }
 
 function normalizePlanApprovals(value: unknown): Record<string, PlanApproval> {
+  return normalizeApprovalMap<PlanApproval>(value);
+}
+
+function normalizeArchiveApprovals(value: unknown): Record<string, ArchiveApproval> {
+  return normalizeApprovalMap<ArchiveApproval>(value);
+}
+
+function normalizeApprovalMap<T extends { approved_at: string; prompt: string }>(value: unknown): Record<string, T> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const approvals: Record<string, PlanApproval> = {};
+  const approvals: Record<string, T> = {};
   for (const [taskId, approval] of Object.entries(value as Record<string, unknown>)) {
     if (!approval || typeof approval !== "object" || Array.isArray(approval)) continue;
-    const candidate = approval as Partial<PlanApproval>;
+    const candidate = approval as Partial<T>;
     if (typeof candidate.approved_at === "string" && typeof candidate.prompt === "string") {
-      approvals[taskId] = { approved_at: candidate.approved_at, prompt: candidate.prompt };
+      approvals[taskId] = { approved_at: candidate.approved_at, prompt: candidate.prompt } as T;
     }
   }
   return approvals;
+}
+
+function normalizePendingSpecPrompt(value: unknown): PendingSpecPrompt | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const pending = value as Partial<PendingSpecPrompt>;
+  return typeof pending.taskId === "string" && typeof pending.created_at === "string"
+    ? { taskId: pending.taskId, created_at: pending.created_at }
+    : undefined;
+}
+
+function normalizeSpecDecisions(value: unknown): Record<string, SpecPromptDecision> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const decisions: Record<string, SpecPromptDecision> = {};
+  for (const [taskId, decision] of Object.entries(value as Record<string, unknown>)) {
+    if (decision === "skip" || decision === "create") decisions[taskId] = decision;
+  }
+  return decisions;
+}
+
+function summarizeSection(text: string, section: string): string | null {
+  const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\r?\\n)##\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s+|$)`, "i").exec(text);
+  const content = match?.[1]?.trim();
+  if (!content) return null;
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[-|]{3,}$/.test(line) && !/^(?:tbd|todo|none|n\/a|placeholder)$/i.test(line));
+  if (lines.length === 0) return null;
+  return lines.slice(0, 6).join("\n");
 }
 
 async function latestTaskId(root: string): Promise<string | null> {

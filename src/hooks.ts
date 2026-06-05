@@ -1,6 +1,10 @@
 import {
+  discoverSkillNames,
   getActiveTask,
+  hasArchiveApproval,
   hasPlanApproval,
+  hasResolvedSpecPrompt,
+  isSpecFileTarget,
   loadSession,
   loadSessionWithDefault,
   normalizePath,
@@ -14,6 +18,7 @@ import {
   type Task,
   type PendingTask,
   type PendingJudgment,
+  type SessionState,
 } from "./task.js";
 
 export type HookInput = {
@@ -72,19 +77,28 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
 
   const activeTask = await getActiveTask(root, sessionId);
 
+  if (session.pendingSpecPrompt && activeTask && activeTask.id === session.pendingSpecPrompt.taskId && activeTask.gate === "research") {
+    return handlePendingSpecPrompt(sessionId, session.pendingSpecPrompt, activeTask);
+  }
+
   if (activeTask && activeTask.gate !== "done") {
+    const skillNames = await discoverSkillNames(root);
     return promptContext(
       [
         `MewoFlow active task: ${activeTask.id}`,
         `Type: ${activeTask.type}`,
         `Current gate: ${activeTask.gate}`,
         visibleTaskNotice(`MewoFlow active task: ${activeTask.id}`, activeTask.gate),
+        coachingPromptForGate(activeTask),
+        skillDiscoveryGuidance(activeTask, session, skillNames),
         "Continue the current gate. Do not create a new task or skip ahead.",
         "Required gate order: research -> grill -> plan -> implement -> verify -> review -> verify -> archive.",
         nextActionForGate(activeTask),
         activeTask.gate === "plan"
           ? `If the latest user response approves the plan, do not let this hook infer it from natural language; run \`npx mewoflow approve-plan --prompt "<user approval>" --session ${sessionId}\` before \`mewoflow check plan\`.`
-          : "",
+          : activeTask.gate === "archive"
+            ? `Before archiving, show the archive summary and ask whether anything still needs changes. When the user confirms no further changes, run \`npx mewoflow approve-archive --prompt "<user confirmation>" --session ${sessionId}\` before \`mewoflow check archive\`.`
+            : "",
       ].join("\n"),
     );
   }
@@ -158,6 +172,10 @@ export async function handlePreToolUse(root: string, input: HookInput): Promise<
     return allowPreToolUse();
   }
 
+  if (isSpecFileTarget(target) && canWriteSpecFiles(session, task)) {
+    return allowPreToolUse();
+  }
+
   if (commandReferencesActiveTaskEvidence(command, task)) {
     return isSafeActiveTaskEvidenceCommand(command, task)
       ? allowPreToolUse()
@@ -196,7 +214,12 @@ export async function handlePostToolUse(root: string, input: HookInput): Promise
   if (isSkillTool(tool)) await recordHookEvidence(warnings, "skill use", () => recordSkillUse(root, sessionId, skillName(input) ?? tool));
   if (tool === "Bash" && command) await recordHookEvidence(warnings, "bash command", () => recordCommand(root, sessionId, command));
 
-  return eventOutput("PostToolUse", warnings.length > 0 ? `MewoFlow warning: ${warnings.join("; ")}` : undefined);
+  const task = await getActiveTask(root, sessionId);
+  const session = await loadSessionWithDefault(root, sessionId);
+  const skillCoaching = task ? postToolSkillCoaching(task, session) : null;
+  if (skillCoaching) warnings.push(skillCoaching);
+
+  return eventOutput("PostToolUse", warnings.length > 0 ? `MewoFlow guidance: ${warnings.join("; ")}` : undefined);
 }
 
 export async function handleStop(root: string, input: HookInput): Promise<Record<string, unknown>> {
@@ -220,10 +243,10 @@ export async function handleStop(root: string, input: HookInput): Promise<Record
 
   if (!task || task.gate === "done") return {};
   const notice = hookNotice("Stop");
-  if (task.gate === "grill" || task.gate === "plan") {
+  if (task.gate === "grill" || task.gate === "plan" || task.gate === "archive") {
     return {
       [MEWOFLOW_NOTICE_FIELD]: notice,
-      additionalContext: `${notice}\nMewoFlow task ${task.id} is waiting at ${task.gate}. It is OK to stop when waiting for user answers or explicit plan approval; do not claim completion.`,
+      additionalContext: `${notice}\nMewoFlow task ${task.id} is waiting at ${task.gate}. It is OK to stop when waiting for user answers, explicit plan/archive approval, or archive summary confirmation; do not claim completion.`,
     };
   }
   return {
@@ -232,6 +255,42 @@ export async function handleStop(root: string, input: HookInput): Promise<Record
     decision: "block",
     reason: `${notice} MewoFlow task ${task.id} is not complete. Current gate: ${task.gate}. Continue the required workflow instead of claiming completion.`,
   };
+}
+
+export async function handleTeammateIdle(root: string, input: HookInput): Promise<Record<string, unknown>> {
+  const sessionId = input.session_id ?? "default";
+  const task = await getActiveTask(root, sessionId);
+
+  if (!task || task.gate === "done") {
+    return eventOutput(
+      "TeammateIdle",
+      "Teammate idle. No active MewoFlow task is recorded for this session; coordinate with the team lead before starting new work.",
+    );
+  }
+
+  return eventOutput(
+    "TeammateIdle",
+    [
+      `Teammate idle while task ${task.id} is at gate ${task.gate}.`,
+      "If you finished a unit of work, tell the team lead what changed and which files to review.",
+      "Avoid file conflicts: do not edit the same files as other teammates.",
+      task.gate === "implement" ? "If implementation is done, record verification evidence in verify.md next." : "Follow the current gate and evidence requirements.",
+    ].join(" "),
+  );
+}
+
+export async function handleTaskCreated(_root: string, _input: HookInput): Promise<Record<string, unknown>> {
+  return eventOutput(
+    "TaskCreated",
+    "Claude Code agent team task created. Keep tasks scoped to non-overlapping files and ensure the team lead tracks dependencies and merges outputs safely.",
+  );
+}
+
+export async function handleTaskCompleted(_root: string, _input: HookInput): Promise<Record<string, unknown>> {
+  return eventOutput(
+    "TaskCompleted",
+    "Claude Code agent team task marked completed. Ensure results are reviewed and verification evidence is updated before advancing MewoFlow gates.",
+  );
 }
 
 async function handlePendingPrompt(sessionId: string, pendingTask: PendingTask): Promise<Record<string, unknown>> {
@@ -254,6 +313,77 @@ function pendingTaskPromptContext(sessionId: string, pendingTask: PendingTask): 
         : `First run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\`, then ask the user whether to create the task. If the user cancels, run \`npx mewoflow cancel-task --session ${sessionId}\`.`,
     ].join("\n"),
   );
+}
+
+async function handlePendingSpecPrompt(sessionId: string, pendingSpecPrompt: { taskId: string }, task: Task): Promise<Record<string, unknown>> {
+  return promptContext(
+    [
+      `MewoFlow spec setup prompt for task ${pendingSpecPrompt.taskId}.`,
+      "Before research, ask the user whether to create or update project specs in `.mewoflow/specs/` (coding.md, testing.md, agent.md).",
+      "Explain briefly what each spec file is for, note that existing project specs can stay as-is, and ask whether they want to flesh them out for this task.",
+      "This hook does not infer the answer from natural-language replies.",
+      `If the user declines spec setup, run \`npx mewoflow spec-skip --session ${sessionId}\`.`,
+      `If the user wants spec setup, run \`npx mewoflow spec-create --session ${sessionId}\`, interview them about conventions/testing/agent expectations, update the spec files, then continue research.`,
+      `Do not run \`mewoflow check research\` until spec-skip or spec-create has been recorded.`,
+      visibleSpecPromptNotice(pendingSpecPrompt.taskId, sessionId),
+      nextActionForGate(task),
+    ].join("\n"),
+  );
+}
+
+function visibleSpecPromptNotice(taskId: string, sessionId: string): string {
+  return [
+    "Mandatory visible response: In your next assistant message, tell the user this MewoFlow hook fired and ask whether to create/update project specs before research.",
+    `Start with: "${hookNotice("UserPromptSubmit")} 任务 ${taskId} 已创建。是否要先完善 .mewoflow/specs/ 里的 coding/testing/agent 规范？"`,
+    `After interpreting the user response, run \`npx mewoflow spec-skip --session ${sessionId}\` or \`npx mewoflow spec-create --session ${sessionId}\`.`,
+  ].join(" ");
+}
+
+function coachingPromptForGate(task: Task): string {
+  const prompts: Partial<Record<Task["gate"], string>> = {
+    research: "Coaching: What facts are still uncertain? Ask the user to confirm assumptions before locking research conclusions.",
+    grill: "Coaching: What decision branches are still open? Ask one concrete question at a time instead of guessing missing requirements.",
+    plan: "Coaching: What could make this plan fail in production? Ask the user about trade-offs, scope cuts, and verification gaps before finalizing.",
+    implement: "Coaching: What integration risks or missing context might break the first implementation slice? Ask before large refactors.",
+    verify: "Coaching: What critical paths or regressions might still be untested? Ask whether the verification evidence matches user expectations.",
+    review: "Coaching: What files, risks, or assumptions deserve a second look? Ask whether unresolved findings need rework or explicit deferred-risk approval.",
+    archive: "Coaching: What follow-ups, known issues, or deferred decisions should the user confirm before archiving? Ask explicitly before closing the task.",
+  };
+  return prompts[task.gate] ?? "Coaching: What is still unclear about this task? Ask the user before claiming completion.";
+}
+
+function skillDiscoveryGuidance(task: Task, session: SessionState, skillNames: string[]): string {
+  const gatesNeedingSkills: Task["gate"][] = ["research", "plan", "implement", "review"];
+  if (!gatesNeedingSkills.includes(task.gate)) return "";
+
+  const discovered = skillNames.length > 0
+    ? `Project-local skills discovered: ${skillNames.join(", ")}.`
+    : "No project-local skills found under .claude/skills/ yet.";
+  const usedThisGate = session.skillUses.some((entry) => entry.gate === task.gate && (!entry.taskId || entry.taskId === task.id));
+
+  return [
+    "Skill discovery:",
+    discovered,
+    "Also check user/global skill directories when relevant; do not hardcode a fixed skill list for this project.",
+    usedThisGate
+      ? "A skill use is already recorded for this gate; keep citing it in the current evidence file."
+      : `Before advancing this gate, browse available skills, read any that match the task domain (${task.gate}), and apply them when they add real value. Record which skills were considered or used in the gate evidence.`,
+    task.gate === "implement"
+      ? "For frontend/backend/UI work, prefer domain skills (design, framework, language best practices) over improvising without guidance."
+      : "",
+  ].filter(Boolean).join(" ");
+}
+
+function postToolSkillCoaching(task: Task, session: SessionState): string | null {
+  const gatesNeedingSkills: Task["gate"][] = ["plan", "implement", "review"];
+  if (!gatesNeedingSkills.includes(task.gate)) return null;
+  const usedThisGate = session.skillUses.some((entry) => entry.gate === task.gate && (!entry.taskId || entry.taskId === task.id));
+  if (usedThisGate) return null;
+  return `No skill usage recorded yet at ${task.gate} gate; browse available skills and apply a relevant one when it improves design, implementation, or review quality.`;
+}
+
+function canWriteSpecFiles(session: SessionState, task: Task): boolean {
+  return session.specDecisions[task.id] === "create" && (task.gate === "research" || task.gate === "grill" || task.gate === "plan");
 }
 
 async function handlePendingJudgmentPrompt(sessionId: string, pendingJudgment: PendingJudgment): Promise<Record<string, unknown>> {
@@ -312,7 +442,7 @@ function allowPreToolUse(): Record<string, unknown> {
   return eventOutput("PreToolUse");
 }
 
-function eventOutput(event: "PreToolUse" | "PostToolUse", detail?: string): Record<string, unknown> {
+function eventOutput(event: "PreToolUse" | "PostToolUse" | "TeammateIdle" | "TaskCreated" | "TaskCompleted", detail?: string): Record<string, unknown> {
   const notice = hookNotice(event);
   const additionalContext = detail ? `${notice}\n${detail}` : notice;
   return {
@@ -370,14 +500,16 @@ function visibleJudgmentNotice(judgment: PromptJudgment): string {
   ].join(" ");
 }
 
-function hookNotice(event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop"): string {
+function hookNotice(event: "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | "TeammateIdle" | "TaskCreated" | "TaskCompleted"): string {
   return event === "UserPromptSubmit"
     ? "猫咪正在监控你的需求喵！"
     : event === "PreToolUse"
       ? "猫咪正在检查工具调用喵！"
       : event === "PostToolUse"
         ? "猫咪已记录工具结果喵！"
-        : "猫咪发现任务还没完成喵！";
+        : event === "Stop"
+          ? "猫咪发现任务还没完成喵！"
+          : "猫咪正在协作团队喵！";
 }
 
 function noActiveTaskWriteReason(): string {
@@ -431,10 +563,10 @@ function nextActionForGate(task: Task): string {
     return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time and record concrete question log, decision coverage, locked decisions, acceptance criteria, and stop rationale in ${base}/grill.md; LLM decides section names. Then run \`mewoflow check grill\`.`;
   }
   if (task.gate === "plan") {
-    return `Next action: before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan and record MVP slice, phases, risks, and parent/child breakdown when applicable (LLM decides structure); then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
+    return `Next action: discover and apply relevant skills for planning shortcuts; before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill scan and record MVP slice, phases, risks, and parent/child breakdown when applicable (LLM decides structure); then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
   }
   if (task.gate === "implement") {
-    return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
+    return `Next action: discover and read relevant frontend/backend/framework skills before editing; read .mewoflow/rules.md, .mewoflow/specs/, plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
   }
   if (task.gate === "verify") {
     return task.reviewed
@@ -442,10 +574,10 @@ function nextActionForGate(task: Task): string {
       : `Next action: record initial verification evidence in ${base}/verify.md, then run \`mewoflow check verify\` to advance to code review.`;
   }
   if (task.gate === "review") {
-    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, and record findings in ${base}/review.md (LLM decides structure). If high/blocker findings need code changes, run \`mewoflow rework --reason "review found ..."\` instead of editing during review. If findings are resolved or explicitly deferred with approval, run \`mewoflow check review\`; after review, verify again before archive.`;
+    return `Next action: discover and use a relevant review skill/subagent when suitable; review concrete changed files and record findings in ${base}/review.md (LLM decides structure). If high/blocker findings need code changes, run \`mewoflow rework --reason "review found ..."\` instead of editing during review. If findings are resolved or explicitly deferred with approval, run \`mewoflow check review\`; after review, verify again before archive.`;
   }
   if (task.gate === "archive") {
-    return `Next action: summarize decisions, verification, review, deferred-risk approval, and follow-ups in ${base}/archive.md, then run \`mewoflow check archive\`. Unresolved high/blocker findings require \`mewoflow approve-deferred-risk --reason "..."\` before archive; the task directory will move to .mewoflow/archive/${task.id}/.`;
+    return `Next action: write ${base}/archive.md with decisions, verification, review, deferred-risk approval, and follow-ups BEFORE running check archive. Show the summary to the user and wait for explicit confirmation; then run \`mewoflow approve-archive --prompt \"...\"\` and only then \`mewoflow check archive\`. Unresolved high/blocker findings require \`mewoflow approve-deferred-risk --reason "..."\` before archive; the task directory will move to .mewoflow/archive/${task.id}/ only after archive.md is written and approved.`;
   }
   return "Next action: start a new MewoFlow task before more implementation work.";
 }
@@ -510,15 +642,17 @@ function isControlledMewoFlowCommand(command: string): boolean {
   const confirm = String.raw`(?:confirm-task|check\s+pending-task-confirmation)${sessionArg}`;
   const cancel = String.raw`cancel-task${sessionArg}`;
   const approveArgs = String.raw`(?:(?:\s+--session\s+${quoted})|(?:\s+--prompt\s+${quoted}))*`;
-  const approve = String.raw`approve-plan${approveArgs}`;
+  const approve = String.raw`approve-(?:plan|archive)${approveArgs}`;
   const split = String.raw`split-task\s+--from-plan${sessionArg}`;
   const sessionOption = String.raw`\s+--session\s+${quoted}`;
   const reasonArg = String.raw`\s+--reason\s+${quoted}`;
   const reviewStateArgs = String.raw`(?:${sessionOption})*${reasonArg}(?:${sessionOption})*`;
   const rework = String.raw`rework${reviewStateArgs}`;
   const deferredRisk = String.raw`approve-deferred-risk${reviewStateArgs}`;
+  const specSkip = String.raw`spec-skip${sessionArg}`;
+  const specCreate = String.raw`spec-create${sessionArg}`;
   const check = String.raw`check\s+(?:pending-task-confirmation|research|grill|plan|implement|verify|review|archive)${sessionArg}`;
-  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split}|${rework}|${deferredRisk}|${check})${redirect}$`, "i").test(trimmed);
+  return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${propose}|${confirm}|${cancel}|${approve}|${split}|${rework}|${deferredRisk}|${specSkip}|${specCreate}|${check})${redirect}$`, "i").test(trimmed);
 }
 
 function isControlledJudgmentCommand(command: string): boolean {

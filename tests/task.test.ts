@@ -88,6 +88,8 @@ describe("task store", () => {
     await saveSession(root, "other-session", {
       pendingTask: { ...stale, proposedTitle: "旧会话任务", proposedSlug: "stale-session-task" },
       planApprovals: {},
+      archiveApprovals: {},
+      specDecisions: {},
       readFiles: [],
       searchTools: [],
       skillUses: [],

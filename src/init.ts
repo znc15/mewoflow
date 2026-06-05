@@ -195,6 +195,7 @@ function agentsTemplate(): string {
     "# Agent Instructions",
     "",
     "This project uses MewoFlow to keep AI development work evidence-driven.",
+    "If you use Claude Code Agent Teams (multi-agent), keep each teammate scoped to non-overlapping files and let the team lead coordinate merges. MewoFlow wires the Agent Teams hook events too (TeammateIdle / TaskCreated / TaskCompleted).",
     "",
     "For standard and complex development tasks, first show the MewoFlow judgment and ask the user whether that judgment has a problem. Do not infer acceptance, rejection, task confirmation, cancellation, or plan approval in hooks from hardcoded natural-language phrases; interpret the user's response and run the explicit MewoFlow CLI state-transition command, then follow the full workflow:",
     "",
@@ -206,7 +207,7 @@ function agentsTemplate(): string {
     "",
     "1. Start or resume by checking state: run `mewoflow status`. If wiring may be stale, run `mewoflow doctor`; use `mewoflow update` to refresh hook runtime/settings while preserving local templates.",
     "2. For a new development request, do not create files immediately. First show the prompt judgment, ask whether it is correct, then run `mewoflow accept-judgment --classification <simple|standard|epic> --session <id>` or `mewoflow reject-judgment --reason \"...\" --session <id>`.",
-    "3. After accepting a workflow task, run `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>`, ask the user to confirm, then run `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>`.",
+    "3. After accepting a workflow task, run `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>`, ask the user to confirm, then run `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>`. After confirmation, ask whether to create/update `.mewoflow/specs/` and run `mewoflow spec-skip` or `mewoflow spec-create` before research.",
     "4. For each gate, write the required evidence file in `.mewoflow/tasks/<task-id>/`, then advance with `mewoflow check <gate> --session <id>`. Do not skip from research/grill/plan into implementation.",
     "5. Before implementation, show the plan, record explicit approval with `mewoflow approve-plan --prompt \"...\" --session <id>`, then run `mewoflow check plan --session <id>` and read `.mewoflow/rules.md`, `research.md`, `grill.md`, and `plan.md`.",
     "6. After implementation, complete `verify -> review -> verify -> archive`. If review requires code changes, run `mewoflow rework --reason \"...\" --session <id>` instead of editing during review.",
@@ -218,7 +219,8 @@ function agentsTemplate(): string {
     "- When AskQuestion is available, prefer it for judgment review, pending task confirmation/cancellation, and plan approval. Treat the selected option as user input evidence only; state still changes only through explicit MewoFlow CLI commands.",
     "- This is command-driven: after interpreting the user's natural-language judgment reply, run `mewoflow accept-judgment --classification <simple|standard|epic> --session <id>` or `mewoflow reject-judgment --reason \"...\" --session <id>`. Do not rely on hardcoded acceptance/rejection phrases.",
     "- Do not propose, create task files, or start research until the judgment is resolved by one of those explicit commands.",
-    "- For a pending task, first run `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>`, then ask the user whether to create the task, preferably via AskQuestion. If Claude interprets the user as confirming, run `mewoflow confirm-task --session <id>`; if cancelling, run `mewoflow cancel-task --session <id>`.",
+    "- For a pending task, first run `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>`, then ask the user whether to create the task, preferably via AskQuestion. If Claude interprets the user as confirming, run `mewoflow confirm-task --session <id>`; if cancelling, run `mewoflow cancel-task --session <id>`. After confirmation, ask whether to create/update project specs and run `mewoflow spec-skip` or `mewoflow spec-create` before research.",
+    "- Discover and apply relevant skills during plan, implement, and review; browse `.claude/skills/` and user/global skills instead of hardcoding per-project skill names.",
     "- Research must use Claude Code WebSearch, WebFetch, MCP search, a relevant skill, or explicit user-provided sources before planning or implementing; record evidence in `research.md` (LLM decides structure and sections).",
     "- During the `grill` gate, use the project-local `grill-me` skill directly; do not merely imitate it.",
     "- Ask and record clarifying questions before locking the plan. Follow the current `grill-me` skill guidance and write concrete question log, decision coverage, locked decisions, acceptance criteria, and stop rationale in `grill.md`; LLM decides section names.",
@@ -230,6 +232,7 @@ function agentsTemplate(): string {
     "- After implementation, run initial `verify`, then write a concrete code `review.md`, use a relevant skill/subagent when suitable; LLM decides review structure and conclusions.",
     "- If review finds high/blocker issues requiring code changes, do not edit during `review`; run `mewoflow rework --reason \"...\"` to return to `implement`. If high risk is explicitly accepted/deferred by the user, record it with `mewoflow approve-deferred-risk --reason \"...\"` before archive.",
     "- Do not claim completion without command evidence, verification evidence in `verify.md`, concrete review evidence in `review.md`, and no unresolved high/blocker findings unless deferred-risk approval is recorded.",
+    "- Before archive, write `archive.md`, show it to the user, record `mewoflow approve-archive --prompt \"...\"`, then run `mewoflow check archive`.",
     "- When the user asks to commit git changes, do not create a workflow task; run `mewoflow commit --message \"<summary>\"`. The command stages current changes, refuses likely secret files, creates a local commit, and never pushes.",
     "- Use `mewoflow status` to inspect the active task.",
     "- Use `mewoflow check <gate>` to advance a gate only after the evidence file is complete.",
@@ -249,6 +252,7 @@ function claudeTemplate(): string {
     "## Claude Code",
     "",
     "This project is wired to Claude Code hooks through MewoFlow.",
+    "Optional: If you enable Claude Code Agent Teams, MewoFlow also wires the Agent Teams hook events (TeammateIdle / TaskCreated / TaskCompleted) for lightweight coordination hints.",
     "",
     "## MewoFlow runbook for Claude Code",
     "",
@@ -265,7 +269,8 @@ function claudeTemplate(): string {
     "- Before creating or skipping a task, visibly report the MewoFlow prompt judgment: simple / standard / epic and the reason, then ask whether the judgment has a problem.",
     "- Prefer AskQuestion for judgment review, task confirmation/cancellation, and plan approval when it is available; after reading the selected option, still run the explicit MewoFlow CLI command.",
     "- Do not infer judgment acceptance/rejection from hardcoded reply phrases. Interpret the user's response, then run `mewoflow accept-judgment --classification <simple|standard|epic> --session <id>` or `mewoflow reject-judgment --reason \"...\" --session <id>`.",
-    "- Pending task ids are not final. Use `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>` before asking whether to create the task, preferably via AskQuestion. Then run `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>` based on Claude's interpretation of the user's response.",
+    "- Pending task ids are not final. Use `mewoflow propose-task --title \"...\" --slug \"descriptive-kebab-slug\" --session <id>` before asking whether to create the task, preferably via AskQuestion. Then run `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>` based on Claude's interpretation of the user's response. After confirmation, ask about project specs and run `mewoflow spec-skip` or `mewoflow spec-create` before research.",
+    "- Discover and apply relevant skills during plan, implement, and review; browse available skills instead of improvising without domain guidance.",
     "- Research must use Claude Code WebSearch, WebFetch, MCP search, relevant skill lookup, or explicit user-provided sources before `mewoflow check research`; record evidence in `research.md` (LLM decides structure and sections).",
     "- Grill must directly use the project-local `grill-me` skill from `.claude/skills/grill-me/SKILL.md` before `mewoflow check grill`.",
     "- New development requests first become a pending judgment review. After `mewoflow accept-judgment`, create only a pending task proposal; ask the user to confirm before research or task file creation.",
@@ -274,6 +279,7 @@ function claudeTemplate(): string {
     "- Read `.mewoflow/rules.md` and the active task evidence before implementation writes.",
     "- After implementation, complete `verify -> review -> verify -> archive`; `review.md` must cite concrete changed files, severity, decisions, and use a relevant skill/subagent when suitable.",
     "- If review finds high/blocker issues that need code changes, run `mewoflow rework --reason \"...\"` instead of editing during review; unresolved high/blocker findings cannot be archived unless `mewoflow approve-deferred-risk --reason \"...\"` records explicit user risk acceptance.",
+    "- Before archive, write `archive.md`, show it to the user, record `mewoflow approve-archive --prompt \"...\"`, then run `mewoflow check archive`.",
     "- If the user asks to commit git changes, run `npx mewoflow commit --message \"<summary>\"`; do not create a workflow task and do not push.",
     "- Let hooks block incomplete work instead of bypassing the workflow.",
   ].join("\n") + "\n";
@@ -289,7 +295,8 @@ function rulesTemplate(): string {
     "- Prefer AskQuestion for judgment review, task confirmation/cancellation, and plan approval when it is available. Treat the selected option as user input evidence only; state still changes only through explicit MewoFlow CLI commands.",
     "- Do not infer acceptance/rejection/confirmation/cancellation/plan approval from hardcoded natural-language phrases. Claude interprets the user response, then changes state with explicit commands.",
     "- Resolve prompt judgment with `mewoflow accept-judgment --classification <simple|standard|epic> --session <id>` or `mewoflow reject-judgment --reason \"...\" --session <id>` before proposing or creating a task.",
-    "- Pending task confirmation requires model-proposed title/slug via `mewoflow propose-task --title \"...\" --slug \"...\" --session <id>`, then `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>`.",
+    "- Pending task confirmation requires model-proposed title/slug via `mewoflow propose-task --title \"...\" --slug \"...\" --session <id>`, then `mewoflow confirm-task --session <id>` or `mewoflow cancel-task --session <id>`. After confirmation, ask whether to create/update project specs and run `mewoflow spec-skip` or `mewoflow spec-create` before research.",
+    "- Discover and apply relevant skills during plan, implement, and review; browse `.claude/skills/` and user/global skills instead of hardcoding per-project skill names.",
     "- Use Claude Code WebSearch/WebFetch/MCP, relevant skill lookup, or user-provided sources during research; record evidence in `research.md` (LLM decides structure and sections).",
     "- Grill must use project-local grill-me and write concrete question log, decision coverage, locked decisions, acceptance criteria, and stop rationale in `grill.md`; LLM decides section names.",
     "- Before finalizing plan, run a fresh shortcut/existing-solution scan and record MVP slice, phases, deferred work, risks, and verification; LLM decides structure and sections.",
@@ -297,9 +304,10 @@ function rulesTemplate(): string {
     "- Show plan to the user before implementation. When Claude interprets approval, record it with `mewoflow approve-plan --prompt \"...\" --session <id>` before `mewoflow check plan`.",
     "- Read this file plus task research/grill/plan before editing.",
     "- After implementation, run initial verify, write `review.md` with concrete file-by-file review and skill/subagent evidence when suitable, then verify again before archive.",
-    "- `mewoflow check archive` moves completed task folders to `.mewoflow/archive/<task-id>/`.",
+    "- `mewoflow check archive` moves completed task folders to `.mewoflow/archive/<task-id>/` only after archive.md is written and `mewoflow approve-archive` is recorded.",
     "- If the user asks to commit git changes, run `mewoflow commit --message \"<summary>\"`; never push unless explicitly requested.",
     "- Do not claim completion without command, critical-path, and review evidence.",
+    "- Before archive, write `archive.md`, show it to the user, record `mewoflow approve-archive --prompt \"...\"`, then run `mewoflow check archive`.",
   ].join("\n") + "\n";
 }
 
@@ -392,6 +400,10 @@ function mewoflowHooks(root: string): Record<string, ClaudeHookGroup[]> {
     PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `${command} pre-tool-use` }] }],
     PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `${command} post-tool-use` }] }],
     Stop: [{ matcher: "*", hooks: [{ type: "command", command: `${command} stop` }] }],
+    // Claude Code Agent Teams hooks (experimental). These are no-ops unless the user enables agent teams.
+    TeammateIdle: [{ matcher: "*", hooks: [{ type: "command", command: `${command} teammate-idle` }] }],
+    TaskCreated: [{ matcher: "*", hooks: [{ type: "command", command: `${command} task-created` }] }],
+    TaskCompleted: [{ matcher: "*", hooks: [{ type: "command", command: `${command} task-completed` }] }],
   };
 }
 

@@ -71,6 +71,7 @@ describe("mewoflow gated workflow", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["spec-skip", "--session", "s1"], root)).resolves.toBe(0);
 
     session = await loadSession(root, "s1");
     expect(session.activeTaskId).toBeTruthy();
@@ -345,6 +346,7 @@ No suitable skill was available for this synthetic e2e code review fixture.
 - review.md passed and post-review verification ran.
 `,
     );
+    await expect(main(["approve-archive", "--prompt", "可以归档了", "--session", "s1"], root)).resolves.toBe(0);
     await expect(main(["check", "archive"], root)).resolves.toBe(0);
 
     const done = await loadTask(root, task.id);

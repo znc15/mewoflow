@@ -51,21 +51,21 @@ flowchart TB
 
 
 
-## Workflow Gates
+## 工作流门禁
 
-`mewoflow check <gate>` 采用 **证据摘要模式**：CLI 输出当前证据文件内容与工具追踪摘要，然后**立即推进 gate**。Agent 须在确认证据充分后才运行 check；若证据不足，继续完善后再执行 check。不再用代码校验固定 section 或字段。
+`mewoflow check <gate>` 采用 **证据摘要模式**：CLI 会输出当前证据文件内容与工具追踪摘要，然后**立即推进该 gate**。Agent 须在确认证据充分后再运行 check；若证据不足，应先完善证据再执行 check。不再通过代码校验固定的 section 或字段。
 
 | Gate                        | 用途                       | 关键证据                                                              |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------- |
 | `pending-task-confirmation` | 判断任务类型，等待用户确认 | `accept-judgment --classification <simple\|standard\|epic>`、`reject-judgment`、`propose-task`、`confirm-task` |
-| `research`                  | 获取最新资料和上下文       | `research.md`：搜索/工具/skill 证据（LLM 自由组织结构）               |
+| `research`                  | 获取最新资料和上下文       | `research.md`：搜索/工具/skill 证据；需先 `spec-skip` 或 `spec-create` |
 | `grill`                     | 使用 `grill-me` 追问需求   | `grill.md`：提问日志、决策覆盖、锁定决策、验收标准、停止理由          |
 | `plan`                      | 编写实现计划               | `plan.md`：快捷方案扫描、MVP 切片、阶段、风险、验证方式               |
 | `user-approval`             | 用户批准计划后才能实现     | `approve-plan --prompt "..."`                                         |
 | `implement`                 | 允许修改代码               | 计划已批准 + 已读取规则（无 evidence 文件，check 直接推进）           |
 | `verify`                    | 验证实现                   | `verify.md`：命令输出、关键链路证据、review 后复验                    |
 | `review`                    | 代码 review（LLM 审查）    | `review.md`：逐文件 review；需返工时运行 `mewoflow rework` 而非阻塞 check |
-| `archive`                   | 归档任务                   | `archive.md`：总结、验证与 review 结论；未解决高危风险需 `approve-deferred-risk` |
+| `archive`                   | 归档任务                   | `archive.md` + `approve-archive --prompt "..."`；未解决高危风险需 `approve-deferred-risk` |
 
 证据文件（`research.md`、`grill.md`、`plan.md`、`verify.md`、`review.md`、`archive.md`）由 LLM 自由编写，**无固定 section 结构**；gate 推进依赖 LLM 审查证据是否充分。
 
@@ -81,6 +81,8 @@ mewoflow reject-judgment --reason "..." --session <id>
 mewoflow propose-task --title "..." --slug "..." --session <id>
 mewoflow confirm-task --session <id>
 mewoflow cancel-task --session <id>
+mewoflow spec-skip --session <id>
+mewoflow spec-create --session <id>
 
 # Gate 推进
 mewoflow check research
@@ -92,6 +94,7 @@ mewoflow check verify
 mewoflow check review
 mewoflow rework --reason "..." --session <id>
 mewoflow approve-deferred-risk --reason "..." --session <id>
+mewoflow approve-archive --prompt "..." --session <id>
 mewoflow check archive
 
 # 拆分与提交
@@ -129,9 +132,27 @@ CLAUDE.md                          # Claude Code 项目记忆
 | `PostToolUse`      | 记录文件读取、搜索与命令执行                         |
 | `Stop`             | 任务未完成时阻止 AI 直接结束                         |
 
-## Troubleshooting
+### Claude Code Agent Teams（多 Agent）
+
+Claude Code 2026 的 **Agent Teams** 支持并行多个 Claude Code 会话协作。MewoFlow 默认会在 `.claude/settings.json` 中一并 wiring 下列团队 hook（即使未启用 Agent Teams 也不影响）：
+
+- `TeammateIdle`
+- `TaskCreated`
+- `TaskCompleted`
+
+启用方式（Claude Code side）：在 `~/.claude/settings.json` 或项目 `.claude/settings.json` 添加环境变量：
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+## 故障排查
 
 - 看不到 hook 提示 → 运行 `/mewoflow` 或 `mewoflow doctor`
 - Claude 想直接创建项目 → 确保已完成 `judgment-review → confirm-task → research → grill → plan → approve-plan`
-- 已确认但仍卡在 pending task → 运行 `mewoflow confirm-task --session <id>`（不要手动建目录）
+- 已确认但仍卡在待确认任务 → 运行 `mewoflow confirm-task --session <id>`（不要手动创建目录）
 - `grill-me` 缺失 → 运行 `mewoflow update` 或 `mewoflow init` 重新生成

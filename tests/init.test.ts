@@ -132,7 +132,10 @@ describe("initProject", () => {
     expect(commands).toContain(`node "${hookPath}" pre-tool-use`);
     expect(commands).toContain(`node "${hookPath}" post-tool-use`);
     expect(commands).toContain(`node "${hookPath}" stop`);
-    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(4);
+    expect(commands).toContain(`node "${hookPath}" teammate-idle`);
+    expect(commands).toContain(`node "${hookPath}" task-created`);
+    expect(commands).toContain(`node "${hookPath}" task-completed`);
+    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(7);
   });
 
   it("replaces stale relative MewoFlow hook commands with root-absolute commands", async () => {
@@ -165,7 +168,7 @@ describe("initProject", () => {
 
     expect(commands).not.toContain('node ".mewoflow/runtime/mewoflow-hook.cjs" pre-tool-use');
     expect(commands).toContain(`node "${hookPath}" pre-tool-use`);
-    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(4);
+    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(7);
   });
 
   it("previews updates without writing during dry-run", async () => {
@@ -224,7 +227,7 @@ describe("initProject", () => {
     expect(settings.permissions?.allow).toEqual(["Read"]);
     expect(commands).not.toContain('node ".mewoflow/runtime/mewoflow-hook.cjs" pre-tool-use');
     expect(commands).toContain(`node "${hookPath}" pre-tool-use`);
-    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(4);
+    expect(commands.filter((command) => command?.includes("mewoflow-hook.cjs"))).toHaveLength(7);
   });
 
   it("force update overwrites generated template files", async () => {

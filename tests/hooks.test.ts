@@ -39,6 +39,7 @@ async function createConfirmedTask(root: string, sessionId = "s1") {
   const confirmation = await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: sessionId });
   expect(String(confirmation.additionalContext)).toContain("confirm-task");
   await expect(main(["confirm-task", "--session", sessionId], root)).resolves.toBe(0);
+  await expect(main(["spec-skip", "--session", sessionId], root)).resolves.toBe(0);
   const active = await loadSession(root, sessionId);
   expect(active.activeTaskId).toBeTruthy();
   expect(active.pendingTask).toBeUndefined();
@@ -214,6 +215,7 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["spec-skip", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeTruthy();
@@ -246,6 +248,7 @@ describe("hooks", () => {
     expect(session.activeTaskId).toBeUndefined();
 
     await expect(main(["confirm-task", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["spec-skip", "--session", "s1"], root)).resolves.toBe(0);
     const activeContext = await handleUserPromptSubmit(root, { prompt: "继续", session_id: "s1" });
     expect(String(activeContext.additionalContext)).toContain("Current gate: research");
     expect(String(activeContext.additionalContext)).toContain("Mandatory visible response");
@@ -650,7 +653,15 @@ describe("hooks", () => {
     await writeFileEnsured(file, '{"activeTaskId":"broken"} trailing');
 
     const session = await loadSession(root, "s1");
-    expect(session).toEqual({ planApprovals: {}, readFiles: [], searchTools: [], skillUses: [], commands: [] });
+    expect(session).toEqual({
+      planApprovals: {},
+      archiveApprovals: {},
+      specDecisions: {},
+      readFiles: [],
+      searchTools: [],
+      skillUses: [],
+      commands: [],
+    });
 
     await expect(handleStop(root, { session_id: "s1" })).resolves.toEqual({});
     await expect(readText(file)).resolves.toContain('"readFiles": []');

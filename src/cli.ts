@@ -11,18 +11,24 @@ import {
   acceptPendingJudgment,
   allChildTasksDone,
   appendArchiveToJournal,
+  approveArchive,
   approveDeferredRisk,
   approvePlan,
   advanceTask,
   archiveTask,
   cancelPendingTask,
   confirmPendingTask,
+  ensureArchiveSummary,
   getActiveTask,
+  hasArchiveApproval,
+  hasMeaningfulArchiveContent,
   hasPlanApproval,
+  hasResolvedSpecPrompt,
   loadSessionWithDefault,
   nextGateForCheck,
   proposePendingTask,
   rejectPendingJudgment,
+  resolveSpecPrompt,
   reworkTask,
   saveTask,
   splitParentTaskFromPlan,
@@ -37,6 +43,9 @@ import {
   handlePostToolUse,
   handlePreToolUse,
   handleStop,
+  handleTaskCompleted,
+  handleTaskCreated,
+  handleTeammateIdle,
   handleUserPromptSubmit,
   type HookInput,
 } from "./hooks.js";
@@ -127,6 +136,21 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
   if (command === "approve-plan") {
     const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
     return approvePlanCommand(root, args);
+  }
+
+  if (command === "approve-archive") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return approveArchiveCommand(root, args);
+  }
+
+  if (command === "spec-skip") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return specSkipCommand(root, args);
+  }
+
+  if (command === "spec-create") {
+    const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
+    return specCreateCommand(root, args);
   }
 
   if (command === "rework") {
@@ -275,7 +299,37 @@ async function confirmTask(root: string, sessionId: string): Promise<number> {
     ].join("\n"));
   }
 
-  console.log(`Pending task confirmed. Task: ${task.id}\nType: ${task.type}\nGate: ${task.gate}`);
+  console.log(`Pending task confirmed. Task: ${task.id}\nType: ${task.type}\nGate: ${task.gate}\nNext: Ask whether to create/update project specs, then run \`mewoflow spec-skip\` or \`mewoflow spec-create\` before \`mewoflow check research\`.`);
+  return 0;
+}
+
+async function approveArchiveCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const prompt = optionValue(args, "--prompt") ?? "approved via mewoflow approve-archive";
+  const task = await getActiveTask(root, sessionId);
+  if (!task) return fail("No active MewoFlow task.");
+  if (task.gate !== "archive") return fail(`Current gate is ${task.gate}. Archive approval is only meaningful at the archive gate.`);
+  await approveArchive(root, task.id, sessionId, prompt);
+  console.log(`Archive approved. Task: ${task.id}`);
+  return 0;
+}
+
+async function specSkipCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const pending = await resolveSpecPrompt(root, sessionId, "skip");
+  if (!pending) return fail("No pending MewoFlow spec setup prompt to skip.");
+  console.log(`Spec setup skipped for task ${pending.taskId}. Continue with research.`);
+  return 0;
+}
+
+async function specCreateCommand(root: string, args: string[]): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  const pending = await resolveSpecPrompt(root, sessionId, "create");
+  if (!pending) return fail("No pending MewoFlow spec setup prompt to accept.");
+  console.log([
+    `Spec setup accepted for task ${pending.taskId}.`,
+    "Next: interview the user and update .mewoflow/specs/coding.md, testing.md, and agent.md as needed, then continue research.",
+  ].join("\n"));
   return 0;
 }
 
@@ -352,6 +406,13 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
   const traceWarning = checkToolTraceWarning(gate, session);
   if (traceWarning) console.warn(traceWarning);
 
+  if (gate === "research" && !hasResolvedSpecPrompt(session, task.id)) {
+    return fail([
+      "Spec setup decision is required before entering research.",
+      "Ask the user whether to create/update project specs in .mewoflow/specs/, then run `mewoflow spec-skip --session <id>` or `mewoflow spec-create --session <id>` before `mewoflow check research`.",
+    ].join("\n"));
+  }
+
   if (gate === "plan" && !hasPlanApproval(session, task.id)) {
     return fail([
       `Plan approval is required before entering implement.`,
@@ -365,6 +426,12 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
 
   const nextGate = nextGateForCheck(gate, task);
   if (!nextGate) return fail(`No next gate for ${gate}.`);
+  if (gate === "archive" && !hasArchiveApproval(session, task.id)) {
+    return fail([
+      "Archive approval is required before completing archive.",
+      "Show archive.md to the user. When the user confirms no further changes are needed, run `mewoflow approve-archive --prompt \"<user confirmation>\" --session <session-id>` before `mewoflow check archive`.",
+    ].join("\n"));
+  }
   if (gate === "archive" && task.taskRole === "parent" && !(await allChildTasksDone(root, task))) {
     return fail(`Parent task ${task.id} cannot be archived until all child tasks are done.`);
   }
@@ -378,7 +445,13 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
     }
   }
   if (gate === "archive") {
-    const archiveMarkdown = await readTaskEvidence(root, task, "archive");
+    const archiveMarkdown = await ensureArchiveSummary(root, task);
+    if (!hasMeaningfulArchiveContent(archiveMarkdown)) {
+      return fail([
+        "Archive cannot proceed with empty archive.md.",
+        "Write .mewoflow/tasks/<task-id>/archive.md with summary, verification, review, and follow-ups before `mewoflow check archive`.",
+      ].join("\n"));
+    }
     await appendArchiveToJournal(root, task, archiveMarkdown);
   }
   const updatedTask = await advanceTask(root, task, nextGate);
@@ -561,6 +634,12 @@ async function runHook(root: string, event: string): Promise<number> {
             ? await handlePostToolUse(root, input)
             : event === "stop"
               ? await handleStop(root, input)
+              : event === "teammate-idle"
+                ? await handleTeammateIdle(root, input)
+                : event === "task-created"
+                  ? await handleTaskCreated(root, input)
+                  : event === "task-completed"
+                    ? await handleTaskCompleted(root, input)
               : {};
   } catch (error) {
     output = safeHookFailureOutput(event, error);
@@ -591,11 +670,14 @@ function safeHookFailureOutput(event: string, error: unknown): Record<string, un
   return output;
 }
 
-function hookEventName(event: string): "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | null {
+function hookEventName(event: string): "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | "TeammateIdle" | "TaskCreated" | "TaskCompleted" | null {
   if (event === "user-prompt-submit") return "UserPromptSubmit";
   if (event === "pre-tool-use") return "PreToolUse";
   if (event === "post-tool-use") return "PostToolUse";
   if (event === "stop") return "Stop";
+  if (event === "teammate-idle") return "TeammateIdle";
+  if (event === "task-created") return "TaskCreated";
+  if (event === "task-completed") return "TaskCompleted";
   return null;
 }
 
