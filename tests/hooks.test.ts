@@ -8,6 +8,9 @@ import {
   handlePostToolUse,
   handlePreToolUse,
   handleStop,
+  handleTaskCompleted,
+  handleTaskCreated,
+  handleTeammateIdle,
   handleUserPromptSubmit,
 } from "../src/hooks.js";
 import { readText, writeFileEnsured } from "../src/fs.js";
@@ -645,6 +648,26 @@ describe("hooks", () => {
       tool_input: { file_path: "src/a.ts" },
     });
     expect(JSON.stringify(allowed)).not.toContain("deny");
+  });
+
+  it("guides agent team hooks by active gate", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    const task = await createConfirmedTask(root, "team-s1");
+
+    task.gate = "implement";
+    await writeFileEnsured(taskFile(root, task.id, "task.json"), JSON.stringify(task, null, 2));
+
+    const idle = await handleTeammateIdle(root, { session_id: "team-s1" });
+    expect(String(idle.additionalContext)).toContain("implement");
+    expect(String(idle.additionalContext)).toContain("do not run mewoflow check");
+
+    const created = await handleTaskCreated(root, { session_id: "team-s1" });
+    expect(String(created.additionalContext)).toContain("non-overlapping");
+    expect(String(created.additionalContext)).toContain("implement");
+
+    const completed = await handleTaskCompleted(root, { session_id: "team-s1" });
+    expect(String(completed.additionalContext)).toContain("Lead merges");
+    expect(String(completed.additionalContext)).toContain("do not run mewoflow check");
   });
 
   it("recovers from corrupted session JSON without crashing stop", async () => {

@@ -268,29 +268,75 @@ export async function handleTeammateIdle(root: string, input: HookInput): Promis
     );
   }
 
+  const gateGuidance = teammateIdleGuidanceForGate(task.gate);
+
   return eventOutput(
     "TeammateIdle",
     [
       `Teammate idle while task ${task.id} is at gate ${task.gate}.`,
-      "If you finished a unit of work, tell the team lead what changed and which files to review.",
-      "Avoid file conflicts: do not edit the same files as other teammates.",
-      task.gate === "implement" ? "If implementation is done, record verification evidence in verify.md next." : "Follow the current gate and evidence requirements.",
+      "Tell the team lead what changed and which files you touched.",
+      "Stay in your assigned paths; do not edit files owned by other teammates.",
+      gateGuidance,
     ].join(" "),
   );
 }
 
-export async function handleTaskCreated(_root: string, _input: HookInput): Promise<Record<string, unknown>> {
+export async function handleTaskCreated(root: string, input: HookInput): Promise<Record<string, unknown>> {
+  const sessionId = input.session_id ?? "default";
+  const task = await getActiveTask(root, sessionId);
+
+  if (!task || task.gate === "done") {
+    return eventOutput(
+      "TaskCreated",
+      "Agent team task created. Coordinate with the team lead before editing; spawn implement teammates only after plan approval and the implement gate.",
+    );
+  }
+
   return eventOutput(
     "TaskCreated",
-    "Claude Code agent team task created. Keep tasks scoped to non-overlapping files and ensure the team lead tracks dependencies and merges outputs safely.",
+    [
+      `Agent team task created while MewoFlow task ${task.id} is at gate ${task.gate}.`,
+      "Assign non-overlapping file paths before parallel work.",
+      task.gate === "implement"
+        ? "Implement teammates: read rules.md and task research/grill/plan, edit only assigned files, and let the lead run mewoflow check."
+        : task.gate === "verify" || task.gate === "review"
+          ? "Verify/review teammates: help gather evidence or review assigned files; the lead owns verify.md, review.md, and gate commands."
+          : "Research, grill, and plan stay with the lead; do not spawn implementation teammates before approve-plan.",
+    ].join(" "),
   );
 }
 
-export async function handleTaskCompleted(_root: string, _input: HookInput): Promise<Record<string, unknown>> {
+export async function handleTaskCompleted(root: string, input: HookInput): Promise<Record<string, unknown>> {
+  const sessionId = input.session_id ?? "default";
+  const task = await getActiveTask(root, sessionId);
+
+  if (!task || task.gate === "done") {
+    return eventOutput(
+      "TaskCompleted",
+      "Agent team task marked completed. Report results to the team lead; only the lead advances MewoFlow gates.",
+    );
+  }
+
   return eventOutput(
     "TaskCompleted",
-    "Claude Code agent team task marked completed. Ensure results are reviewed and verification evidence is updated before advancing MewoFlow gates.",
+    [
+      `Agent team task completed while MewoFlow task ${task.id} is at gate ${task.gate}.`,
+      "Send the lead your file list, summary, and open questions.",
+      task.gate === "implement"
+        ? "Lead merges changes, runs tests, and advances to verify when the slice is ready; teammates do not run mewoflow check."
+        : "Lead updates evidence files and runs the next mewoflow check when the gate is ready.",
+    ].join(" "),
   );
+}
+
+function teammateIdleGuidanceForGate(gate: Task["gate"]): string {
+  if (gate === "implement") {
+    return "Implement gate: wait for the lead if your slice is done; do not run mewoflow check or edit files outside your assignment.";
+  }
+  if (gate === "verify" || gate === "review") {
+    return "Verify/review gate: hand findings to the lead; do not edit implementation files during review or advance gates yourself.";
+  }
+  return "Follow the current gate; implementation teammates should not start before approve-plan and the implement gate.";
 }
 
 async function handlePendingPrompt(sessionId: string, pendingTask: PendingTask): Promise<Record<string, unknown>> {

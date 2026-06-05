@@ -140,7 +140,12 @@ Claude Code 2026 的 **Agent Teams** 支持并行多个 Claude Code 会话协作
 - `TaskCreated`
 - `TaskCompleted`
 
-启用方式（Claude Code side）：在 `~/.claude/settings.json` 或项目 `.claude/settings.json` 添加环境变量：
+#### 前置条件
+
+1. 全局或项目已安装 MewoFlow：`npm install -g mewoflow && mewoflow update`
+2. 项目已初始化：`mewoflow init`（或 `/mewoflow`）
+3. 健康检查通过：`mewoflow doctor`
+4. 在 `~/.claude/settings.json` 或项目 `.claude/settings.json` 启用 Agent Teams：
 
 ```json
 {
@@ -149,6 +154,49 @@ Claude Code 2026 的 **Agent Teams** 支持并行多个 Claude Code 会话协作
   }
 }
 ```
+
+#### 开发期多 Agent 工作流（implement / verify / review）
+
+**原则**：research → grill → plan 由 **Lead（主会话）** 单独完成；`approve-plan` 之后才并行拉队友。
+
+```txt
+Lead: judgment → research → grill → plan → approve-plan → check plan → implement
+                                                              ↓
+                    ┌─────────────────────────────────────────┴──────────────────────────┐
+                    │ 并行（implement 门禁内，文件互不重叠）                              │
+                    │  Explore 队友：只读搜代码/文档，不写实现文件                         │
+                    │  Implement 队友 A：src/api/**                                        │
+                    │  Implement 队友 B：src/ui/**                                         │
+                    │  Lead：合并、改共享文件（路由/导出/配置）、跑 mewoflow check         │
+                    └────────────────────────────────────────────────────────────────────┘
+                                                              ↓
+Lead: verify → review → verify → archive（可拉 Review 队友只读审查，由 Lead 写 review.md）
+```
+
+**逐步操作**
+
+1. Lead 走完前期门禁直到 `approve-plan`，运行 `mewoflow check plan` 进入 `implement`。
+2. Lead 按 `plan.md` 切片，为每个队友声明**独占路径**（目录或文件），再创建 Agent Team 任务。
+3. 队友首次改代码前须已读 `.mewoflow/rules.md` 与任务目录下的 `research.md`、`grill.md`、`plan.md`（PreToolUse 会拦截未读就写）。
+4. 队友完工后向 Lead 汇报：改了哪些文件、摘要、未决问题；**不要**自行 `mewoflow check`。
+5. Lead 合并后写 `verify.md`，`mewoflow check verify`；review 阶段可派队友审查，但返工须 Lead 执行 `mewoflow rework`，队友不在 review 门禁改代码。
+6. 全部完成后 Lead 写 `archive.md` 并 `approve-archive` → `check archive`。
+
+**谁跑哪些命令**
+
+| 角色 | 允许 | 禁止 |
+| ---- | ---- | ---- |
+| Lead | `check`、`approve-plan`、`rework`、`approve-archive`、`split-task` | — |
+| 队友 | `status`、只读工具、分配路径内的 implement 写入 | 推进 gate、批准计划、改他人文件 |
+
+**常见坑**
+
+- 未 `approve-plan` 就拉 implement 队友 → PreToolUse 拒绝写代码。
+- 两队友改同一文件 → 冲突与合并风险；共享文件留给 Lead。
+- 队友跑 `mewoflow check` → 会话状态分裂，门禁应由 Lead 统一推进。
+- 不同 `--session` 未对齐 → 用 Lead 的 session 作为唯一 workflow 源。
+
+更完整的角色说明见项目根目录 `AGENTS.md`（`mewoflow update --force` 可刷新模板）。
 
 ## 故障排查
 
