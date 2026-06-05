@@ -14,8 +14,8 @@ describe("mewoflow gated workflow", () => {
     await expect(main(["init"], root)).resolves.toBe(0);
 
     const judged = await handleUserPromptSubmit(root, { prompt: "开发一个音乐网站", session_id: "s1" });
-    expect(String(judged.additionalContext)).toContain("MewoFlow prompt judgment");
-    expect(String(judged.additionalContext)).toContain("No pending task has been proposed yet");
+    expect(String(judged.additionalContext)).toContain("pending judgment");
+    expect(String(judged.additionalContext)).toContain("undetermined");
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
@@ -30,7 +30,7 @@ describe("mewoflow gated workflow", () => {
 
     const proposed = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
     expect(String(proposed.additionalContext)).toContain("accept-judgment");
-    expect(String(proposed.additionalContext)).toContain("propose-task");
+    expect(String(proposed.additionalContext)).toContain("--classification");
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
@@ -39,10 +39,10 @@ describe("mewoflow gated workflow", () => {
     const allowedAcceptJudgmentCommand = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Bash",
-      tool_input: { command: "npx mewoflow accept-judgment --session s1" },
+      tool_input: { command: "npx mewoflow accept-judgment --classification standard --session s1" },
     });
     expect(JSON.stringify(allowedAcceptJudgmentCommand)).not.toContain("deny");
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
 
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeUndefined();

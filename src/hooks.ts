@@ -23,7 +23,7 @@ export type HookInput = {
   tool_input?: Record<string, unknown>;
 };
 
-export type PromptClassification = "simple" | TaskType;
+export type PromptClassification = "simple" | "undetermined" | TaskType;
 
 export type PromptJudgment = {
   classification: PromptClassification;
@@ -38,38 +38,10 @@ export function classifyPrompt(prompt: string): PromptClassification {
 }
 
 export function judgePrompt(prompt: string): PromptJudgment {
-  if (isMinorEditPrompt(prompt)) {
-    return {
-      classification: "simple",
-      requiresWorkflow: false,
-      reason: "minor edit request; no full research/grill/plan workflow is required unless implementation writes escalate.",
-    };
-  }
-  if (isMetaPrompt(prompt)) {
-    return {
-      classification: "simple",
-      requiresWorkflow: false,
-      reason: "MewoFlow meta/status command or slash prompt; do not create a workflow task.",
-    };
-  }
-  if (isEpicPrompt(prompt)) {
-    return {
-      classification: "epic",
-      requiresWorkflow: true,
-      reason: "broad system/platform/architecture request; use a parent epic before child implementation tasks.",
-    };
-  }
-  if (isWorkflowTaskPrompt(prompt)) {
-    return {
-      classification: "standard",
-      requiresWorkflow: true,
-      reason: "development or implementation request; create only a pending task proposal until the user confirms.",
-    };
-  }
   return {
-    classification: "simple",
+    classification: "undetermined",
     requiresWorkflow: false,
-    reason: "no workflow intent detected from the prompt; PreToolUse still blocks new implementation writes without an active task.",
+    reason: prompt,
   };
 }
 
@@ -125,28 +97,18 @@ export async function handleUserPromptSubmit(root: string, input: HookInput): Pr
   }
 
   const judgment = judgePrompt(prompt);
-  const classification = judgment.classification;
   await setPendingJudgment(root, { ...judgment, prompt, created_at: new Date().toISOString() }, sessionId);
-
-  if (classification === "simple") {
-    return promptContext(
-      [
-        ...promptJudgmentLines(judgment),
-        visibleJudgmentNotice(judgment),
-        "MewoFlow: simple request detected. Full workflow is not required if the user agrees with this judgment.",
-        `Ask the user whether this judgment is correct before doing work. If they accept, run \`npx mewoflow accept-judgment --session ${sessionId}\`; if they disagree, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` and ask for the corrected classification or request.`,
-      ].join("\n"),
-    );
-  }
 
   return promptContext(
     [
-      ...promptJudgmentLines(judgment),
-      visibleJudgmentNotice(judgment),
-      "No pending task has been proposed yet. First ask the user whether this judgment is correct.",
-      `If the user accepts the judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\`. That command creates the pending task draft; only after that run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\` and ask whether to create the task.`,
-      `If the user says the judgment is wrong, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` before asking for the corrected classification or request.`,
-      "Do not start research, ask requirements, write task files, scaffold, install dependencies, or edit code before judgment review and task confirmation.",
+      "MewoFlow: New prompt recorded as pending judgment (undetermined).",
+      "Before doing any work, determine whether this request is:",
+      "- simple: no full workflow needed (minor edit, question, meta command)",
+      "- standard: development task requiring research -> grill -> plan -> implement -> verify -> review -> archive",
+      "- epic: broad system/architecture request requiring parent epic splitting",
+      "Ask the user to confirm your classification.",
+      `If correct, run \`npx mewoflow accept-judgment --classification <simple|standard|epic> --session ${sessionId}\`.`,
+      `If wrong, run \`npx mewoflow reject-judgment --reason "<correction>" --session ${sessionId}\`.`,
     ].join("\n"),
   );
 }
@@ -307,9 +269,11 @@ async function handlePendingJudgmentPrompt(sessionId: string, pendingJudgment: P
       visibleJudgmentNotice(judgment),
       "Ask the user exactly whether this judgment has a problem before doing anything else: `这个 MewoFlow 判断有问题吗？如果没问题我再继续；如果有问题请告诉我应改成 simple / standard / epic。`",
       "This hook does not infer judgment acceptance or rejection from natural-language replies.",
-      pendingJudgment.classification === "simple"
-        ? `If the latest user response accepts this simple judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\` to clear the pending judgment without creating a task.`
-        : `If the latest user response accepts this workflow judgment, run \`npx mewoflow accept-judgment --session ${sessionId}\`; then run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\` before asking for task creation confirmation.`,
+      pendingJudgment.classification === "undetermined"
+        ? `If the latest user response accepts this judgment, run \`npx mewoflow accept-judgment --classification <simple|standard|epic> --session ${sessionId}\`.`
+        : pendingJudgment.classification === "simple"
+          ? `If the latest user response accepts this simple judgment, run \`npx mewoflow accept-judgment --classification simple --session ${sessionId}\` to clear the pending judgment without creating a task.`
+          : `If the latest user response accepts this workflow judgment, run \`npx mewoflow accept-judgment --classification ${pendingJudgment.classification} --session ${sessionId}\`; then run \`npx mewoflow propose-task --title "<model title>" --slug "descriptive-kebab-slug" --session ${sessionId}\` before asking for task creation confirmation.`,
       `If the latest user response rejects or corrects this judgment, run \`npx mewoflow reject-judgment --reason "<user correction>" --session ${sessionId}\` before asking for the corrected classification or request.`,
       "Do not propose a task, create task files, research, grill, plan, scaffold, install dependencies, or edit code until the judgment is resolved by one of those explicit commands.",
     ].join("\n"),
@@ -424,10 +388,13 @@ function noActiveTaskWriteReason(): string {
 }
 
 function pendingJudgmentWriteReason(judgment: PendingJudgment): string {
+  const acceptCommand = judgment.classification === "undetermined"
+    ? "`npx mewoflow accept-judgment --classification <simple|standard|epic>`"
+    : "`npx mewoflow accept-judgment`";
   return [
     `Pending MewoFlow prompt judgment is waiting for user review. Classification: ${judgment.classification}; requires workflow: ${judgment.requiresWorkflow ? "yes" : "no"}; reason: ${judgment.reason}`,
     "Ask the user whether this judgment has a problem before proposing a task or doing work.",
-    "Do not write files, scaffold, install dependencies, create a task, or start research/grill/plan until Claude resolves the judgment with `npx mewoflow accept-judgment` or `npx mewoflow reject-judgment --reason \"...\"`.",
+    `Do not write files, scaffold, install dependencies, create a task, or start research/grill/plan until Claude resolves the judgment with ${acceptCommand} or \`npx mewoflow reject-judgment --reason "..."\`.`,
   ].join(" ");
 }
 
@@ -457,13 +424,13 @@ function writeBlockedReason(task: Task): string {
 function nextActionForGate(task: Task): string {
   const base = `.mewoflow/tasks/${task.id}`;
   if (task.gate === "research") {
-    return `Next action: complete ${base}/research.md with Tool Evidence from WebSearch/WebFetch/MCP/skill or user-provided-source evidence, then run \`mewoflow check research\`; after that, directly use the project-local grill-me skill before plan or implementation.`;
+    return `Next action: complete ${base}/research.md with search/tool/skill evidence (LLM decides structure and sections), then run \`mewoflow check research\`; after that, directly use the project-local grill-me skill before plan or implementation.`;
   }
   if (task.gate === "grill") {
-    return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time and record concrete question-log, decision-coverage, locked-decision, acceptance-criteria, and stop-rationale evidence in ${base}/grill.md; field labels are not fixed. Then run \`mewoflow check grill\`.`;
+    return `Next action: directly use the project-local \`grill-me\` skill from .claude/skills/grill-me/SKILL.md. Interview one question at a time and record concrete question log, decision coverage, locked decisions, acceptance criteria, and stop rationale in ${base}/grill.md; LLM decides section names. Then run \`mewoflow check grill\`.`;
   }
   if (task.gate === "plan") {
-    return `Next action: before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan, record Shortcut / Existing Solution Scan, MVP Slice, phases, risks, and parent/child breakdown when applicable; then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
+    return `Next action: before finalizing ${base}/plan.md, run a fresh WebSearch/WebFetch/MCP/skill shortcut scan and record MVP slice, phases, risks, and parent/child breakdown when applicable (LLM decides structure); then show the plan and wait for explicit approval before \`mewoflow check plan\`. If approval is structured, run \`mewoflow approve-plan --prompt \"...\"\`.`;
   }
   if (task.gate === "implement") {
     return `Next action: read .mewoflow/rules.md plus ${base}/research.md, grill.md, and plan.md before editing. If this is a rework and plan approval is missing, run \`mewoflow approve-plan --prompt "rework approval" [--session <id>]\`.`;
@@ -474,7 +441,7 @@ function nextActionForGate(task: Task): string {
       : `Next action: record initial verification evidence in ${base}/verify.md, then run \`mewoflow check verify\` to advance to code review.`;
   }
   if (task.gate === "review") {
-    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, and record findings in ${base}/review.md. If high/blocker findings need code changes, set Result: needs-work and run \`mewoflow rework --reason "review found ..."\` instead of editing during review. If findings are resolved or explicitly deferred with approval, run \`mewoflow check review\`; after review, verify again before archive.`;
+    return `Next action: review concrete changed files, use a relevant skill/subagent when suitable, and record findings in ${base}/review.md (LLM decides structure). If high/blocker findings need code changes, run \`mewoflow rework --reason "review found ..."\` instead of editing during review. If findings are resolved or explicitly deferred with approval, run \`mewoflow check review\`; after review, verify again before archive.`;
   }
   if (task.gate === "archive") {
     return `Next action: summarize decisions, verification, review, deferred-risk approval, and follow-ups in ${base}/archive.md, then run \`mewoflow check archive\`. Unresolved high/blocker findings require \`mewoflow approve-deferred-risk --reason "..."\` before archive; the task directory will move to .mewoflow/archive/${task.id}/.`;
@@ -511,28 +478,12 @@ function requiresWorkflowWithoutActiveTask(tool: string, command: string): boole
   return isWriteAttempt(tool, command);
 }
 
-function isEpicPrompt(prompt: string): boolean {
-  return /系统|平台|架构|工具集|大型重构|workflow|agent/i.test(prompt);
-}
-
-function isMinorEditPrompt(prompt: string): boolean {
-  return /颜色|文案|typo|样式|小改动|margin|padding|div/i.test(prompt);
-}
-
-function isWorkflowTaskPrompt(prompt: string): boolean {
-  return isBuildFromScratchPrompt(prompt) || /修复|新增|添加|加入|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|更新|迁移|发布|安装|依赖|测试|bug|API|接口|登录|页面|组件|脚本|数据库|hook|功能/i.test(prompt);
-}
-
 function isGitCommitPrompt(prompt: string): boolean {
   const trimmed = prompt.trim();
   if (/^(提交|提交git|git提交|git\s+commit|commit)$/i.test(trimmed)) return true;
   const looksLikeCommit = /(?:git|代码|改动|当前变更|版本).{0,12}(?:提交|commit)|(?:提交|commit).{0,12}(?:git|代码|改动|当前变更|版本)/i.test(trimmed);
   const includesNewWork = /修复|新增|添加|加入|实现|开发|构建|重构|接入|集成|排查|定位|优化|升级|更新|迁移|安装|依赖|测试|写|创建|制作|搭建/i.test(trimmed);
   return trimmed.length <= 80 && looksLikeCommit && !includesNewWork;
-}
-
-function isBuildFromScratchPrompt(prompt: string): boolean {
-  return /创建|做|写|编写|制作|搭建|生成|开发|从零开始|新建/i.test(prompt) && /网页|网站|应用|项目|播放器|前端|后台|管理系统|博客|官网|小程序|工具|客户端|服务端|管理台|页面/i.test(prompt);
 }
 
 function hasPackageManagerWriteCommand(command: string): boolean {
@@ -574,8 +525,9 @@ function isControlledJudgmentCommand(command: string): boolean {
   const mewoflow = String.raw`(?:npx\s+)?mewoflow`;
   const quoted = String.raw`(?:(?:"[^"]+")|(?:'[^']+')|(?:[^\s&;|<>]+))`;
   const sessionArg = String.raw`(?:\s+--session\s+${quoted})?`;
+  const classificationArg = String.raw`(?:\s+--classification\s+${quoted})?`;
   const redirect = String.raw`(?:\s+2>&1)?`;
-  const accept = String.raw`accept-judgment${sessionArg}`;
+  const accept = String.raw`accept-judgment${classificationArg}${sessionArg}`;
   const rejectArgs = String.raw`(?:(?:\s+--reason\s+${quoted})|(?:\s+--session\s+${quoted}))+`;
   const reject = String.raw`reject-judgment${rejectArgs}`;
   return new RegExp(`^${cdPrefix}${mewoflow}\\s+(?:${accept}|${reject})${redirect}$`, "i").test(trimmed);
@@ -600,10 +552,6 @@ function isControlledMaintenanceCommand(command: string): boolean {
   return new RegExp(`^${cdPrefix}${mewoflow}\\s+update(?:\\s+${updateArg})*${redirect}$`, "i").test(trimmed);
 }
 
-function isMetaPrompt(prompt: string): boolean {
-  const trimmed = prompt.trim();
-  return /^\/mewoflow(?:-[a-z0-9-]+)?\b/i.test(trimmed) || /^mewoflow\s+(doctor|status|help|version|init|update|check|hook|rework|approve-deferred-risk)\b/i.test(trimmed);
-}
 
 function hasShellWriteRedirection(command: string): boolean {
   return /(^|\s)(?:\d{0,2})?>>?(?!&)/.test(command);

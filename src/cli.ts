@@ -19,18 +19,19 @@ import {
   confirmPendingTask,
   getActiveTask,
   hasPlanApproval,
-  loadSession,
   loadSessionWithDefault,
   nextGateForCheck,
   proposePendingTask,
-  readTaskMarkdown,
   rejectPendingJudgment,
   reworkTask,
   saveTask,
   splitParentTaskFromPlan,
   type Gate,
+  type SessionState,
+  type Task,
+  type TaskType,
 } from "./task.js";
-import { validateArchive, validateGrill, validatePlan, validateResearch, validateReview, validateVerify } from "./validators.js";
+import { readTextIfExists } from "./fs.js";
 import {
   MEWOFLOW_NOTICE_FIELD,
   handlePostToolUse,
@@ -99,7 +100,8 @@ export async function main(argv = process.argv.slice(2), root = process.cwd()): 
 
   if (command === "accept-judgment") {
     const args = [subcommand, ...rest].filter((value): value is string => Boolean(value));
-    return acceptJudgmentCommand(root, optionValue(args, "--session") ?? "default");
+    const classification = optionValue(args, "--classification") ?? undefined;
+    return acceptJudgmentCommand(root, args, classification);
   }
 
   if (command === "reject-judgment") {
@@ -197,8 +199,15 @@ function formatUpdateResult(result: UpdateResult): string {
   return lines.join("\n");
 }
 
-async function acceptJudgmentCommand(root: string, sessionId: string): Promise<number> {
-  const result = await acceptPendingJudgment(root, sessionId);
+async function acceptJudgmentCommand(root: string, args: string[], classificationOverride?: string): Promise<number> {
+  const sessionId = optionValue(args, "--session") ?? "default";
+  let result;
+  try {
+    result = await acceptPendingJudgment(root, sessionId, classificationOverride as TaskType | "simple" | undefined);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(message);
+  }
   if (!result) return fail("No pending MewoFlow prompt judgment to accept.");
 
   if (!result.pendingTask) {
@@ -334,27 +343,9 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
   if (task.gate !== gate) return fail(`Current gate is ${task.gate}, not ${gate}.`);
 
   const session = await loadSessionWithDefault(root, sessionId);
-  let markdown = "";
-  const validation =
-    gate === "research"
-      ? validateResearch((markdown = await readTaskMarkdown(root, task, "research.md")), session)
-      : gate === "grill"
-        ? validateGrill((markdown = await readTaskMarkdown(root, task, "grill.md")))
-        : gate === "plan"
-          ? validatePlan((markdown = await readTaskMarkdown(root, task, "plan.md")), session, task)
-        : gate === "verify"
-          ? validateVerify((markdown = await readTaskMarkdown(root, task, "verify.md")), session, task)
-          : gate === "review"
-            ? validateReview((markdown = await readTaskMarkdown(root, task, "review.md")), session, task)
-            : gate === "archive"
-              ? validateArchive((markdown = await readTaskMarkdown(root, task, "archive.md")), task)
-              : { ok: true, errors: [] };
 
-  if (!validation.ok) return fail(validation.errors.join("\n"));
-
-  if (gate === "review" && reviewNeedsWork(markdown)) {
-    return fail("Review result is needs-work. Do not advance review; run `mewoflow rework --reason \"...\"` to return to implement, or record resolved/deferred findings before checking review again.");
-  }
+  const traceWarning = checkToolTraceWarning(gate, session);
+  if (traceWarning) console.warn(traceWarning);
 
   if (gate === "plan" && !hasPlanApproval(session, task.id)) {
     return fail([
@@ -363,21 +354,98 @@ async function checkGate(root: string, gate: Gate, sessionId = "default"): Promi
     ].join("\n"));
   }
 
+  const evidence = await readTaskEvidence(root, task, gate);
+  const summary = formatEvidenceSummary(gate, evidence, session, task);
+  console.log(summary);
+
   const nextGate = nextGateForCheck(gate, task);
   if (!nextGate) return fail(`No next gate for ${gate}.`);
   if (gate === "archive" && task.taskRole === "parent" && !(await allChildTasksDone(root, task))) {
     return fail(`Parent task ${task.id} cannot be archived until all child tasks are done.`);
   }
-  if (gate === "archive") await appendArchiveToJournal(root, task, markdown);
+  if (gate === "archive") {
+    const archiveMarkdown = await readTaskEvidence(root, task, "archive");
+    await appendArchiveToJournal(root, task, archiveMarkdown);
+  }
   const updatedTask = await advanceTask(root, task, nextGate);
   if (gate === "archive") await archiveTask(root, updatedTask);
-  console.log(`Gate ${gate} passed. Next gate: ${nextGate}.`);
+  console.log(`Gate "${gate}" check passed. Task advanced to "${nextGate}".`);
   return 0;
 }
 
-function reviewNeedsWork(markdown: string): boolean {
-  const match = /(?:^|\r?\n)##\s+Result\s*\r?\n([\s\S]*?)(?=\r?\n##\s+|$)/i.exec(markdown);
-  return /(?:^|\r?\n)\s*(?:[-*]\s*)?(?:result\s*:\s*)?needs-work\b/i.test(match?.[1] ?? "");
+function checkToolTraceWarning(gate: Gate, session: SessionState): string | null {
+  switch (gate) {
+    case "research":
+      if (session.searchTools.length === 0 && session.skillUses.length === 0) {
+        return "Warning: No search tool or skill usage recorded for research. LLM may have gathered information through other means.";
+      }
+      return null;
+    case "grill":
+      if (!session.skillUses.some((s) => s.skill.toLowerCase().includes("grill"))) {
+        return "Warning: No grill-me skill usage recorded for grill. LLM may have conducted the interview through other means.";
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+function formatEvidenceSummary(gate: Gate, evidence: string, session: SessionState, task: Task): string {
+  const lines: string[] = [
+    `--- Gate Check: ${gate} ---`,
+    `Task: ${task.title} (${task.type})`,
+    "",
+  ];
+
+  if (session.searchTools.length > 0) {
+    lines.push(`Search tools used: ${session.searchTools.map((s) => s.tool).join(", ")}`);
+  }
+  if (session.commands.length > 0) {
+    lines.push(`Commands run: ${session.commands.length} command(s)`);
+  }
+  if (session.skillUses.length > 0) {
+    lines.push(`Skills used: ${session.skillUses.map((s) => s.skill).join(", ")}`);
+  }
+  if (session.readFiles.length > 0) {
+    lines.push(`Files read: ${session.readFiles.length} file(s)`);
+  }
+  lines.push("");
+
+  if (evidence.trim()) {
+    lines.push(`Evidence file content (${gate}.md):`);
+    lines.push(evidence);
+  } else {
+    lines.push(`Evidence file (${gate}.md) is empty.`);
+  }
+
+  lines.push("");
+  lines.push("--- LLM Review Required ---");
+  lines.push(`Review the evidence above for the "${gate}" gate.`);
+  lines.push("Determine whether the evidence is sufficient to proceed.");
+  lines.push("If sufficient, this gate check will pass and the task will advance.");
+  lines.push("If insufficient, continue working and try again later.");
+
+  return lines.join("\n");
+}
+
+async function readTaskEvidence(root: string, task: Task, gate: Gate): Promise<string> {
+  const evidenceMap: Record<string, string> = {
+    research: "research.md",
+    grill: "grill.md",
+    plan: "plan.md",
+    verify: "verify.md",
+    review: "review.md",
+    archive: "archive.md",
+  };
+  const fileName = evidenceMap[gate];
+  if (!fileName) return "";
+
+  const filePath = path.join(root, ".mewoflow", "tasks", task.id, fileName);
+  try {
+    return await readTextIfExists(filePath) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 async function overrideGate(root: string, gate: Gate, args: string[]): Promise<number> {

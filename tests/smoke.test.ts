@@ -81,7 +81,7 @@ describe("mewoflow cli", () => {
     expect(updated.deferredRiskApprovals.at(-1)).toMatchObject({ reason: "user accepted known high severity follow-up" });
   });
 
-  it("does not advance review when Result is needs-work", async () => {
+  it("advances review gate regardless of needs-work result (LLM review + rework command)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-review-cli-"));
     const task = await createTask(root, { title: "review needs work", type: "standard", gate: "review" });
     await writeFileEnsured(
@@ -122,7 +122,9 @@ Run npm test after rework.
 `,
     );
 
-    await expect(main(["check", "review"], root)).resolves.toBe(1);
-    await expect(loadTask(root, task.id)).resolves.toMatchObject({ gate: "review" });
+    await expect(main(["check", "review"], root)).resolves.toBe(0);
+    const updated = await loadTask(root, task.id);
+    expect(updated.gate).toBe("verify");
+    expect(updated.reviewed).toBe(true);
   });
 });

@@ -19,7 +19,7 @@ import {
 } from "../src/task.js";
 
 describe("task store", () => {
-  it("creates a date-prefixed task with workflow templates", async () => {
+  it("creates a date-prefixed task with empty evidence files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-task-"));
     const task = await createTask(root, {
       title: "修复 登录 bug",
@@ -30,12 +30,9 @@ describe("task store", () => {
     expect(task.id).toBe("2026-05-31-xiu-fu-deng-lu-bug");
     expect(task.gate).toBe("research");
 
-    await expect(fs.stat(taskFile(root, task.id, "research.md"))).resolves.toBeTruthy();
-    await expect(fs.stat(taskFile(root, task.id, "grill.md"))).resolves.toBeTruthy();
-    await expect(fs.stat(taskFile(root, task.id, "plan.md"))).resolves.toBeTruthy();
-    await expect(fs.stat(taskFile(root, task.id, "verify.md"))).resolves.toBeTruthy();
-    await expect(fs.stat(taskFile(root, task.id, "review.md"))).resolves.toBeTruthy();
-    await expect(fs.stat(taskFile(root, task.id, "archive.md"))).resolves.toBeTruthy();
+    for (const file of ["research.md", "grill.md", "plan.md", "verify.md", "review.md", "archive.md"]) {
+      await expect(fs.readFile(taskFile(root, task.id, file), "utf8")).resolves.toBe("");
+    }
     expect(task.reviewed).toBe(false);
 
     const loaded = await loadTask(root, task.id);

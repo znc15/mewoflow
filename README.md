@@ -53,17 +53,21 @@ flowchart TB
 
 ## Workflow Gates
 
+`mewoflow check <gate>` 采用 **LLM 审查模式**：CLI 输出当前证据文件内容，由 LLM 判断是否足以推进 gate，不再用代码校验固定 section 或字段。
+
 | Gate                        | 用途                       | 关键证据                                                              |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------- |
-| `pending-task-confirmation` | 判断任务类型，等待用户确认 | `accept-judgment` / `reject-judgment`、`propose-task`、`confirm-task` |
-| `research`                  | 获取最新资料和上下文       | `## Tool Evidence`（WebSearch/WebFetch/MCP/skill）                    |
-| `grill`                     | 使用 `grill-me` 追问需求   | 提问日志、决策覆盖、锁定决策、验收标准、停止理由                      |
-| `plan`                      | 编写实现计划               | 快捷/现成方案扫描、MVP 切片、阶段、风险、验证方式                     |
+| `pending-task-confirmation` | 判断任务类型，等待用户确认 | `accept-judgment --classification <simple\|standard\|epic>`、`reject-judgment`、`propose-task`、`confirm-task` |
+| `research`                  | 获取最新资料和上下文       | `research.md`：搜索/工具/skill 证据（LLM 自由组织结构）               |
+| `grill`                     | 使用 `grill-me` 追问需求   | `grill.md`：提问日志、决策覆盖、锁定决策、验收标准、停止理由          |
+| `plan`                      | 编写实现计划               | `plan.md`：快捷方案扫描、MVP 切片、阶段、风险、验证方式               |
 | `user-approval`             | 用户批准计划后才能实现     | `approve-plan --prompt "..."`                                         |
 | `implement`                 | 允许修改代码               | 计划已批准 + 已读取规则                                               |
-| `verify`                    | 验证实现                   | 命令输出、关键链路证据、review 后复验                                 |
-| `review`                    | 代码 review                | 逐文件 review、严重级别；高危需 `mewoflow rework` 退回                |
-| `archive`                   | 归档任务                   | 总结、验证结果、review 结论；未解决高危风险需 `approve-deferred-risk` |
+| `verify`                    | 验证实现                   | `verify.md`：命令输出、关键链路证据、review 后复验                    |
+| `review`                    | 代码 review（LLM 审查）    | `review.md`：逐文件 review；需返工时运行 `mewoflow rework` 而非阻塞 check |
+| `archive`                   | 归档任务                   | `archive.md`：总结、验证与 review 结论；未解决高危风险需 `approve-deferred-risk` |
+
+证据文件（`research.md`、`grill.md`、`plan.md`、`verify.md`、`review.md`、`archive.md`）由 LLM 自由编写，**无固定 section 结构**；gate 推进依赖 LLM 审查证据是否充分。
 
 ## 常用命令
 
@@ -72,7 +76,7 @@ mewoflow status
 mewoflow doctor
 
 # 判断与任务确认
-mewoflow accept-judgment --session <id>
+mewoflow accept-judgment --classification <simple|standard|epic> --session <id>
 mewoflow reject-judgment --reason "..." --session <id>
 mewoflow propose-task --title "..." --slug "..." --session <id>
 mewoflow confirm-task --session <id>

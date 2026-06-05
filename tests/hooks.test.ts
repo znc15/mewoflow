@@ -15,7 +15,7 @@ import { loadSession, loadTask, recordReadFile, sessionFile, taskFile } from "..
 
 async function createConfirmedTask(root: string, sessionId = "s1") {
   const judgment = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: sessionId });
-  expect(String(judgment.additionalContext)).toContain("MewoFlow prompt judgment");
+  expect(String(judgment.additionalContext)).toContain("pending judgment");
   let pending = await loadSession(root, sessionId);
   expect(pending.pendingJudgment).toBeTruthy();
   expect(pending.pendingTask).toBeUndefined();
@@ -28,7 +28,7 @@ async function createConfirmedTask(root: string, sessionId = "s1") {
   expect(pending.pendingTask).toBeUndefined();
   expect(pending.activeTaskId).toBeUndefined();
 
-  await expect(main(["accept-judgment", "--session", sessionId], root)).resolves.toBe(0);
+  await expect(main(["accept-judgment", "--classification", "standard", "--session", sessionId], root)).resolves.toBe(0);
   pending = await loadSession(root, sessionId);
   expect(pending.pendingTask).toBeTruthy();
   expect(pending.pendingJudgment).toBeUndefined();
@@ -46,17 +46,18 @@ async function createConfirmedTask(root: string, sessionId = "s1") {
 }
 
 describe("hooks", () => {
-  it("does not create a workflow for simple prompts", async () => {
+  it("records new prompt as undetermined and requires classification on accept", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "把 div 改成红色", session_id: "s1" });
 
     expect(output[MEWOFLOW_NOTICE_FIELD]).toBe("猫咪正在监控你的需求喵！");
-    expect(String(output.additionalContext)).toContain("MewoFlow prompt judgment");
-    expect(String(output.additionalContext)).toContain("simple");
-    expect(String(output.additionalContext)).toContain("Ask the user whether this judgment is correct");
+    expect(String(output.additionalContext)).toContain("pending judgment");
+    expect(String(output.additionalContext)).toContain("undetermined");
+    expect(String(output.additionalContext)).toContain("determine whether this request is");
 
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingJudgment!.classification).toBe("undetermined");
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
 
@@ -67,7 +68,7 @@ describe("hooks", () => {
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "simple", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeUndefined();
     expect(session.pendingTask).toBeUndefined();
@@ -75,14 +76,34 @@ describe("hooks", () => {
     await expect(fs.readdir(path.join(root, ".mewoflow", "tasks"))).rejects.toThrow();
   });
 
-  it("does not create a workflow for conversational prompts after init", async () => {
+  it("requires --classification when accepting an undetermined judgment", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
+    await handleUserPromptSubmit(root, { prompt: "随便看看", session_id: "s1" });
+
+    const session = await loadSession(root, "s1");
+    expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingJudgment!.classification).toBe("undetermined");
+
+    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(1);
+    const unchanged = await loadSession(root, "s1");
+    expect(unchanged.pendingJudgment).toBeTruthy();
+
+    await expect(main(["accept-judgment", "--classification", "simple", "--session", "s1"], root)).resolves.toBe(0);
+    const afterAccept = await loadSession(root, "s1");
+    expect(afterAccept.pendingJudgment).toBeUndefined();
+    expect(afterAccept.pendingTask).toBeUndefined();
+    expect(afterAccept.activeTaskId).toBeUndefined();
+  });
+
+  it("records undetermined classification for conversational prompts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "你好", session_id: "s1" });
 
-    expect(String(output.additionalContext)).toContain("simple");
+    expect(String(output.additionalContext)).toContain("undetermined");
 
     const session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingJudgment!.classification).toBe("undetermined");
     expect(session.activeTaskId).toBeUndefined();
 
     const stop = await handleStop(root, { session_id: "s1" });
@@ -92,14 +113,15 @@ describe("hooks", () => {
     expect(stop.decision).toBeUndefined();
   });
 
-  it("does not create a workflow for mewoflow doctor slash prompts", async () => {
+  it("records undetermined classification for slash prompts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "/mewoflow-doctor", session_id: "s1" });
 
-    expect(String(output.additionalContext)).toContain("simple");
+    expect(String(output.additionalContext)).toContain("undetermined");
 
     const session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingJudgment!.classification).toBe("undetermined");
     expect(session.activeTaskId).toBeUndefined();
 
     const stop = await handleStop(root, { session_id: "s1" });
@@ -109,35 +131,31 @@ describe("hooks", () => {
     expect(stop.decision).toBeUndefined();
   });
 
-  it("proposes a pending workflow for build-from-scratch product prompts", async () => {
+  it("records undetermined judgment for build-from-scratch product prompts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "我想创建一个音乐网页", session_id: "s1" });
 
     expect(String(output.additionalContext)).toContain("猫咪正在监控你的需求喵！");
-    expect(String(output.additionalContext)).toContain("MewoFlow prompt judgment");
-    expect(String(output.additionalContext)).toContain("Classification: standard");
-    expect(String(output.additionalContext)).toContain("Requires workflow: yes");
-    expect(String(output.additionalContext)).toContain("猫咪先判断需求喵");
-    expect(String(output.additionalContext)).toContain("No pending task has been proposed yet");
-    expect(String(output.additionalContext)).toContain("First ask the user whether this judgment is correct");
-    expect(String(output.additionalContext)).toContain("Mandatory visible response");
-    expect(String(output.additionalContext)).not.toContain("Pending task draft created");
+    expect(String(output.additionalContext)).toContain("pending judgment");
+    expect(String(output.additionalContext)).toContain("undetermined");
+    expect(String(output.additionalContext)).toContain("determine whether this request is");
+    expect(String(output.additionalContext)).toContain("accept-judgment --classification");
 
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
+    expect(session.pendingJudgment!.classification).toBe("undetermined");
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
     expect(String(accepted.additionalContext)).toContain("accept-judgment");
-    expect(String(accepted.additionalContext)).toContain("propose-task");
 
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeTruthy();
     expect(session.pendingJudgment).toBeUndefined();
@@ -146,14 +164,13 @@ describe("hooks", () => {
     await expect(fs.stat(path.join(root, ".mewoflow", "tasks", session.pendingTask!.id))).rejects.toThrow();
   });
 
-  it("proposes a pending workflow for write-a-webpage prompts", async () => {
+  it("records undetermined judgment for write-a-webpage prompts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const output = await handleUserPromptSubmit(root, { prompt: "帮我写一个音乐播放器网页", session_id: "s1" });
 
-    expect(String(output.additionalContext)).toContain("MewoFlow prompt judgment");
-    expect(String(output.additionalContext)).toContain("Classification: standard");
-    expect(String(output.additionalContext)).toContain("No pending task has been proposed yet");
-    expect(String(output.additionalContext)).toContain("whether this judgment is correct");
+    expect(String(output.additionalContext)).toContain("pending judgment");
+    expect(String(output.additionalContext)).toContain("undetermined");
+    expect(String(output.additionalContext)).toContain("determine whether this request is");
 
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
@@ -162,14 +179,13 @@ describe("hooks", () => {
 
     const accepted = await handleUserPromptSubmit(root, { prompt: "判断没问题", session_id: "s1" });
     expect(String(accepted.additionalContext)).toContain("accept-judgment");
-    expect(String(accepted.additionalContext)).toContain("propose-task");
 
     session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
     expect(session.activeTaskId).toBeUndefined();
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
     session = await loadSession(root, "s1");
     expect(session.pendingTask).toBeTruthy();
     expect(session.pendingJudgment).toBeUndefined();
@@ -187,7 +203,7 @@ describe("hooks", () => {
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
     await expect(main(["propose-task", "--title", "网易云网页音乐播放器", "--slug", "netease-web-music-player", "--session", "s1"], root)).resolves.toBe(0);
 
     const confirmed = await handleUserPromptSubmit(root, { prompt: "确认", session_id: "s1" });
@@ -206,7 +222,7 @@ describe("hooks", () => {
   it("creates an active workflow only after user confirmation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "mewoflow-hooks-"));
     const proposed = await handleUserPromptSubmit(root, { prompt: "修复登录 bug", session_id: "s1" });
-    expect(String(proposed.additionalContext)).toContain("MewoFlow prompt judgment");
+    expect(String(proposed.additionalContext)).toContain("pending judgment");
 
     let session = await loadSession(root, "s1");
     expect(session.pendingJudgment).toBeTruthy();
@@ -219,7 +235,7 @@ describe("hooks", () => {
     expect(session.pendingJudgment).toBeTruthy();
     expect(session.pendingTask).toBeUndefined();
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
     await expect(main(["propose-task", "--title", "修复登录 bug", "--slug", "login-bug", "--session", "s1"], root)).resolves.toBe(0);
 
     const confirmed = await handleUserPromptSubmit(root, { prompt: "确认创建任务", session_id: "s1" });
@@ -272,11 +288,11 @@ describe("hooks", () => {
     const allowedAcceptJudgmentCommand = await handlePreToolUse(root, {
       session_id: "s1",
       tool_name: "Bash",
-      tool_input: { command: "npx mewoflow accept-judgment --session s1" },
+      tool_input: { command: "npx mewoflow accept-judgment --classification standard --session s1" },
     });
     expect(JSON.stringify(allowedAcceptJudgmentCommand)).not.toContain("deny");
 
-    await expect(main(["accept-judgment", "--session", "s1"], root)).resolves.toBe(0);
+    await expect(main(["accept-judgment", "--classification", "standard", "--session", "s1"], root)).resolves.toBe(0);
 
     const blocked = await handlePreToolUse(root, {
       session_id: "s1",

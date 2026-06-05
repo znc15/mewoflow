@@ -51,7 +51,7 @@ export type PendingTask = {
 
 export type PendingJudgment = {
   prompt: string;
-  classification: TaskType | "simple";
+  classification: TaskType | "simple" | "undetermined";
   requiresWorkflow: boolean;
   reason: string;
   created_at: string;
@@ -206,12 +206,9 @@ export async function createTask(
   };
 
   await writeJson(taskFile(root, id, "task.json"), task);
-  await writeFileEnsured(taskFile(root, id, "research.md"), researchTemplate());
-  await writeFileEnsured(taskFile(root, id, "grill.md"), grillTemplate());
-  await writeFileEnsured(taskFile(root, id, "plan.md"), planTemplate());
-  await writeFileEnsured(taskFile(root, id, "verify.md"), verifyTemplate());
-  await writeFileEnsured(taskFile(root, id, "review.md"), reviewTemplate());
-  await writeFileEnsured(taskFile(root, id, "archive.md"), archiveTemplate());
+  for (const file of ["research.md", "grill.md", "plan.md", "verify.md", "review.md", "archive.md"]) {
+    await writeFileEnsured(taskFile(root, id, file), "");
+  }
 
   return task;
 }
@@ -369,24 +366,30 @@ export async function clearPendingTask(root: string, sessionId = "default"): Pro
   }
 }
 
-export async function acceptPendingJudgment(root: string, sessionId = "default"): Promise<{ judgment: PendingJudgment; pendingTask?: PendingTask } | null> {
+export async function acceptPendingJudgment(root: string, sessionId = "default", classificationOverride?: TaskType | "simple"): Promise<{ judgment: PendingJudgment; pendingTask?: PendingTask } | null> {
   const session = await loadSession(root, sessionId);
   const defaultJudgment = sessionId !== "default" && !session.pendingJudgment ? (await loadSession(root, "default")).pendingJudgment : undefined;
   const judgment = session.pendingJudgment ?? defaultJudgment;
   if (!judgment) return null;
 
-  if (judgment.classification === "simple") {
+  const effectiveClassification = classificationOverride ?? judgment.classification;
+
+  if (effectiveClassification === "simple") {
     await clearPendingJudgment(root, sessionId);
-    return { judgment };
+    return { judgment: { ...judgment, classification: effectiveClassification } };
+  }
+
+  if (effectiveClassification === "undetermined") {
+    throw new Error("Cannot accept a judgment with undetermined classification. Provide --classification <simple|standard|epic>.");
   }
 
   const pendingTask = await createPendingTask(root, {
     title: judgment.prompt,
-    type: judgment.classification,
+    type: effectiveClassification,
     prompt: judgment.prompt,
   });
   await setPendingTask(root, pendingTask, sessionId);
-  return { judgment, pendingTask };
+  return { judgment: { ...judgment, classification: effectiveClassification }, pendingTask };
 }
 
 export async function rejectPendingJudgment(root: string, sessionId = "default"): Promise<PendingJudgment | null> {
@@ -784,7 +787,7 @@ function normalizePendingJudgment(value: unknown): PendingJudgment | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const judgment = value as Partial<PendingJudgment>;
   return typeof judgment.prompt === "string" &&
-    (judgment.classification === "simple" || judgment.classification === "standard" || judgment.classification === "epic") &&
+    (judgment.classification === "simple" || judgment.classification === "standard" || judgment.classification === "epic" || judgment.classification === "undetermined") &&
     typeof judgment.requiresWorkflow === "boolean" &&
     typeof judgment.reason === "string" &&
     typeof judgment.created_at === "string"
@@ -889,26 +892,3 @@ async function taskMarkdownPath(root: string, taskId: string, file: string): Pro
   return archivedTaskFile(root, taskId, file);
 }
 
-function researchTemplate(): string {
-  return `# Research\n\n## Tool Evidence\n- Tool Used:\n- Query / Skill / MCP:\n- Result Summary:\n\n## Sources\n| Source | Type | Why It Matters |\n|---|---|---|\n\n## Current Facts\n\n## Assumptions\n\n## Impact On This Task\n\n## Unknowns\n`;
-}
-
-function grillTemplate(): string {
-  return `# Grill\n\n## Grill Skill\n- Used skill: grill-me\n- Source: .claude/skills/grill-me/SKILL.md\n\n## Question Log\n\n### Q1\nQuestion:\nRecommended answer:\nUser answer:\nDecision:\n\n## Decision Coverage\nRecord the decision areas required by the current task and the current grill-me skill. Field names are examples, not validator rules.\n\n## Locked Decisions\n\n## Acceptance Criteria\n\n## Grill Completion Judgment\nRecord why continuing to ask questions is now low-value.\n\n## Open Questions\n- None\n`;
-}
-
-function planTemplate(): string {
-  return `# Plan\n\n## Goal\n\n## Scope\n\n## Non-goals\n\n## Shortcut / Existing Solution Scan\n| Source | Type | Finding | Decision |\n|---|---|---|---|\n\n## MVP Slice\n\n## Parent / Child Task Breakdown\n| Child Task | Purpose | Acceptance |\n|---|---|---|\n\n## Phases\n\n## Deferred / Later\n\n## Files To Change\n\n## Steps\n\n## Risks\n\n## Verification\n`;
-}
-
-function verifyTemplate(): string {
-  return `# Verify\n\n## Result\n- blocked\n\n## Commands Run\n| Command | Result | Evidence |\n|---|---|---|\n\n## Critical Path\n| Path | Result | Evidence |\n|---|---|---|\n\n## Review Follow-up\n| Review Item | Verification | Evidence |\n|---|---|---|\n\n## Notes\n`;
-}
-
-function reviewTemplate(): string {
-  return `# Review\n\n## Result\n- blocked\n\nAllowed final values: passed, needs-work, deferred-with-approval.\n\n## Scope\n\n## File-by-file Review\n| File | Finding | Severity | Decision |\n|---|---|---|---|\n\n## Architecture Impact\n\n## Security\n\n## Performance\n\n## Maintainability\n\n## Unresolved Questions\n- None\n\n## Skill / Subagent Evidence\n| Skill or Subagent | Purpose | Evidence |\n|---|---|---|\n\n## Required Follow-up Verification\n`;
-}
-
-function archiveTemplate(): string {
-  return `# Archive\n\n## Summary\n\n## Decisions\n\n## Verification\n\n## Review\n\n## Deferred Risk Approval\n- none\n\n## Follow-ups\n\n## Archived Location\n.mewoflow/archive/<task-id>/\n\n## Rule Updates\n- none\n`;
-}
